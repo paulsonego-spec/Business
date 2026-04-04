@@ -1,0 +1,68 @@
+{
+  "project": {
+    "name": "HV Transmission Network - Downside",
+    "start_year": 2026,
+    "construction_years": 4,
+    "operating_years": 35,
+    "currency": "USD"
+  },
+  "capex": {
+    "transmission_lines_km": 250.0,
+    "cost_per_km": 2.9,
+    "substation_count": 4,
+    "cost_per_substation": 52.0,
+    "transformer_count": 8,
+    "cost_per_transformer": 14.0,
+    "land_easements": 42.0,
+    "construction_overhead_pct": 0.15,
+    "contingency_pct": 0.15,
+    "construction_phasing": [0.15, 0.30, 0.35, 0.20],
+    "sustaining_capex_pct": 0.020,
+    "capex_escalation_rate": 0.035
+  },
+  "opex": {
+    "maintenance_pct_of_rab": 0.018,
+    "staffing_base": 9.0,
+    "staffing_growth_rate": 0.025,
+    "grid_losses_pct": 0.030,
+    "energy_price_for_losses": 60.0,
+    "insurance_pct_of_rab": 0.004,
+    "regulatory_compliance": 2.0,
+    "opex_escalation_rate": 0.030
+  },
+  "revenue": {
+    "capacity_charge_per_mw_year": 55000.0,
+    "contracted_capacity_mw": 1500.0,
+    "capacity_growth_rate": 0.010,
+    "energy_charge_per_mwh": 4.50,
+    "annual_energy_gwh": 8000.0,
+    "energy_growth_rate": 0.015,
+    "connection_fee_annual": 5.0,
+    "revenue_escalation_rate": 0.025
+  },
+  "regulatory": {
+    "allowed_return_on_equity": 0.095,
+    "allowed_return_on_debt": 0.052,
+    "regulatory_gearing": 0.60,
+    "regulatory_depreciation_years": 40,
+    "depreciation_method": "straight_line",
+    "regulatory_period_years": 5,
+    "efficiency_factor": 0.012,
+    "inflation_rate": 0.030
+  },
+  "tax": {
+    "corporate_tax_rate": 0.30,
+    "tax_depreciation_years": 25,
+    "tax_depreciation_method": "straight_line",
+    "loss_carry_forward": true
+  },
+  "funding": {
+    "gearing_ratio": 0.60,
+    "cost_of_debt": 0.060,
+    "cost_of_equity": 0.14,
+    "risk_free_rate": 0.040,
+    "equity_risk_premium": 0.065,
+    "asset_beta": 0.50,
+    "debt_tenor_years": 12
+  }
+}
