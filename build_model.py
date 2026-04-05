@@ -879,16 +879,618 @@ def build_checks(ws):
             c.fill=C_HIS if h else C_OK; c.font=F_B
 
 
-# ── Main ───────────────────────────────────────────
+
+# ══════════════════════════════════════════════════
+# NEW TAB ROW MAPS
+# ══════════════════════════════════════════════════
+PR = {}  # Projects
+CP = {}  # Capex
+FA = {}  # Fixed Assets
+WF = {}  # Workforce
+MN = {}  # Maintenance
+IT = {}  # Initiatives
+
+PR.update({'title':1,'yr_hdr':2,'sec':4,'hdr_row':5,
+    'p001':6,'p002':7,'p003':8,'p004':9,'p005':10,
+    'p006':11,'p007':12,'p008':13,'p009':14,'p010':15,
+    'tot_capex':17,'aug':19,'repl':20,'conn':21})
+
+CP.update({'title':1,'yr_hdr':2,'sec':4,'aug':5,'repl':6,'conn':7,'tot_proj':8,
+    'ovhd_sec':10,'ovhd_rate':11,'ovhd_amt':12,'tot_capex':13,
+    'recon_sec':15,'assm_capex':16,'variance':17})
+
+# Fixed Assets: 5 asset classes × 7 rows each + 2 blank = ~42 rows; totals below
+_FA_CLASSES = ['lines','subs','trans','scada','other']
+_FA_BASE = {'lines':5,'subs':13,'trans':21,'scada':29,'other':37}
+for _cls, _base in _FA_BASE.items():
+    FA[f'{_cls}_sec']   = _base
+    FA[f'{_cls}_ogross'] = _base+1
+    FA[f'{_cls}_adds']   = _base+2
+    FA[f'{_cls}_disp']   = _base+3
+    FA[f'{_cls}_cgross']  = _base+4
+    FA[f'{_cls}_oda']    = _base+5
+    FA[f'{_cls}_da_chg'] = _base+6
+    FA[f'{_cls}_cda']    = _base+7
+FA.update({'title':1,'yr_hdr':2,'asset_sec':4,'tot_sec':46,
+    'tot_gross':47,'tot_accum_da':48,'tot_net_ppe':49,'da_charge':50})
+
+# Workforce: 5 departments × 5 rows + totals
+_WF_DEPTS = ['ops','eng','corp','ict','exec']
+_WF_BASE = {'ops':8,'eng':15,'corp':22,'ict':29,'exec':36}
+for _d, _b in _WF_BASE.items():
+    WF[f'{_d}_sec']   = _b
+    WF[f'{_d}_fte']   = _b+1
+    WF[f'{_d}_sal']   = _b+2
+    WF[f'{_d}_cost']  = _b+3
+    WF[f'{_d}_oncost']= _b+4
+    WF[f'{_d}_total'] = _b+5
+WF.update({'title':1,'yr_hdr':2,'oncost_sec':4,'oncost_rate':5,
+    'dept_sec':7,'tot_sec':44,'tot_fte':45,'tot_cost':46,
+    'ops_feed':47,'supp_feed':48})
+
+MN.update({'title':1,'yr_hdr':2,'plan_sec':4,'lines':5,'subs':6,'trans':7,
+    'scada':8,'other':9,'tot_planned':10,
+    'corr_sec':12,'corr_rate':13,'tot_corr':14,
+    'tot_sec':16,'tot_maint':17})
+
+IT.update({'title':1,'yr_hdr':2,
+    'rev_sec':4,'rev_ancillary':5,'rev_conn':6,'rev_tariff':7,'tot_rev':8,
+    'opex_sec':10,'opex_procure':11,'opex_auto':12,'opex_energy':13,'tot_opex':14,
+    'fin_sec':16,'fin_refi':17,'fin_hedge':18,'tot_fin':19,
+    'dep_sec':21,'dep_life':22,'dep_disp':23,'tot_dep':24,
+    'net_sec':26,'net_value':27})
+
+
+# ── Projects ───────────────────────────────────────
+def build_projects(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws,46,11); frz(ws)
+    title_row(ws,"CAPITAL PROJECTS PIPELINE — Project-Level Capex Schedule","1F5C8B")
+    yr_hdr(ws, PR['yr_hdr'])
+    sec(ws,PR['sec'],"Capital Projects ($M Nominal) — Forecast Period FY2024E–FY2033E")
+    # Column headers for label section
+    ws.cell(row=PR['hdr_row'],column=1,value="  Project Name  |  Type  |  Budget $M").font=F_B
+    for col in range(DC,DC+NT): ws.cell(row=PR['hdr_row'],column=col).fill=C_SEC
+
+    PROJECTS = [
+        # (id_key, name, type_tag, budget, {yr:$M per yr})
+        ('p001','P001  Grid Modernisation Program','AUG', 630,
+          {2024:90,2025:130,2026:150,2027:120,2028:80,2029:60}),
+        ('p002','P002  Substation Upgrades — Zone A','REPL',210,
+          {2024:70,2025:90,2026:50}),
+        ('p003','P003  HVDC Interconnect (Stage 1)','AUG', 480,
+          {2025:60,2026:120,2027:150,2028:120,2029:30}),
+        ('p004','P004  New Connection — Wind Farm A','CONN',45,
+          {2024:25,2025:20}),
+        ('p005','P005  Transformer Replacement Program','REPL',350,
+          {2024:35,2025:40,2026:45,2027:50,2028:55,2029:55,2030:50,2031:20}),
+        ('p006','P006  Protection Relay Upgrade','REPL',120,
+          {2024:30,2025:35,2026:30,2027:25}),
+        ('p007','P007  New Connection — Solar Farm B','CONN',80,
+          {2025:40,2026:40}),
+        ('p008','P008  Transmission Reconductoring','REPL',420,
+          {2026:50,2027:70,2028:90,2029:90,2030:80,2031:40}),
+        ('p009','P009  Digital Twin Infrastructure','AUG', 90,
+          {2027:30,2028:35,2029:25}),
+        ('p010','P010  Reactive Power Support','AUG', 75,
+          {2028:25,2029:30,2030:20}),
+    ]
+    TYPE_COLOR={'AUG':'DCE6F1','REPL':'FFF2CC','CONN':'E2EFDA'}
+
+    for proj_key,name,ptype,budget,sched in PROJECTS:
+        row=PR[proj_key]
+        lbl(ws,row,name)
+        ws.cell(row=row,column=1).fill=fill(TYPE_COLOR.get(ptype,'FFFFFF'))
+        for yr,amt in sched.items():
+            if 2024<=yr<=2033:
+                col=ycol(yr)
+                fcell(ws,row,col,amt,FMTD)
+
+    # Legend
+    for col in range(DC,DC+NT): ws.cell(row=PR['hdr_row']-1,column=col).fill=C_HDR
+
+    # Total capex by year
+    lbl(ws,PR['tot_capex'],"TOTAL CAPEX BY YEAR ($M)")
+    ws.cell(row=PR['tot_capex'],column=1).font=F_B
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        if h:
+            val=HV['aug'][i]+HV['repl'][i]+HV['conn'][i]
+            hcell(ws,PR['tot_capex'],col,val,FMTD,bold=True)
+        else:
+            row_refs=",".join(f"{cl}{PR[k]}" for k in
+                ['p001','p002','p003','p004','p005','p006','p007','p008','p009','p010'])
+            fcell(ws,PR['tot_capex'],col,f"=SUM({row_refs})",FMTD,bold=True,tot=True)
+
+    # By type
+    TYPE_TAGS={'aug':'AUG','repl':'REPL','conn':'CONN'}
+    for row,lbl_t,ptype in [(PR['aug'],"  Augmentation (AUG)",'AUG'),
+        (PR['repl'],"  Replacement (REPL)",'REPL'),
+        (PR['conn'],"  Connections (CONN)",'CONN')]:
+        lbl(ws,row,lbl_t)
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            if h:
+                type_key={'AUG':'aug','REPL':'repl','CONN':'conn'}[ptype]
+                hcell(ws,row,col,HV[type_key][i],FMTD,bold=False)
+            else:
+                matching=[k for k,(_,t,_,_) in
+                    [(p[0],p[1:]) for p in PROJECTS] if t==ptype
+                    ] if False else []
+                # Compute from projects
+                proj_total = sum(
+                    p[4].get(yr,0) for p in PROJECTS if p[2]==ptype)
+                fcell(ws,row,col,proj_total if proj_total>0 else 0,FMTD)
+
+    # Note
+    note=ws.cell(row=PR['tot_capex']+1,column=1,
+        value="  AUG=Augmentation (blue) | REPL=Replacement (yellow) | CONN=Connections (green)")
+    note.font=mkf(italic=True,color="595959",size=9)
+
+
+# ── Capex ──────────────────────────────────────────
+def build_capex(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws); frz(ws)
+    title_row(ws,"CAPITAL EXPENDITURE SCHEDULE — Detailed Capex Build-Up","1F5C8B")
+    yr_hdr(ws, CP['yr_hdr'])
+    sec(ws,CP['sec'],"Project-Sourced Capex by Category ($M Nominal)")
+    # Pull from Projects tab (aug/repl/conn rows there)
+    for row,lbl_t,pr_row in [(CP['aug'],"  Augmentation Capex",PR['aug']),
+        (CP['repl'],"  Replacement / Renewal",PR['repl']),
+        (CP['conn'],"  Connections",PR['conn'])]:
+        lbl(ws,row,lbl_t)
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            fcell(ws,row,col,xref("Projects",cl,pr_row),FMTD,hist=h)
+    lbl(ws,CP['tot_proj'],"  Total Project Capex")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,CP['tot_proj'],col,
+            f"={cl}{CP['aug']}+{cl}{CP['repl']}+{cl}{CP['conn']}",FMTD,bold=True,sub=True,hist=h)
+
+    sec(ws,CP['ovhd_sec'],"Capitalised Overheads")
+    lbl(ws,CP['ovhd_rate'],"  Overhead Capitalisation Rate (%)")
+    inp(ws,CP['ovhd_rate'],DC,0.08,FMTP)
+    lbl(ws,CP['ovhd_amt'],"  Capitalised Overheads ($M)")
+    lbl(ws,CP['tot_capex'],"TOTAL CAPEX (incl. overheads)")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,CP['ovhd_amt'],col,
+            f"={cl}{CP['tot_proj']}*$B${CP['ovhd_rate']}",FMTD,hist=h)
+        fcell(ws,CP['tot_capex'],col,
+            f"={cl}{CP['tot_proj']}+{cl}{CP['ovhd_amt']}",FMTD,bold=True,tot=True,hist=h)
+
+    sec(ws,CP['recon_sec'],"Reconciliation to Assumptions Capex ($M)")
+    lbl(ws,CP['assm_capex'],"  Assumptions Total (aug+repl+conn)")
+    lbl(ws,CP['variance'],"  Variance (Capex tab less Assumptions)")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        if h:
+            assm_val=HV['aug'][i]+HV['repl'][i]+HV['conn'][i]
+            hcell(ws,CP['assm_capex'],col,assm_val,FMTD)
+            hcell(ws,CP['variance'],col,0,FMTD)
+        else:
+            assm=f"=Assumptions!{cl}{A['aug']}+Assumptions!{cl}{A['repl']}+Assumptions!{cl}{A['conn']}"
+            fcell(ws,CP['assm_capex'],col,assm,FMTD)
+            fcell(ws,CP['variance'],col,
+                f"={cl}{CP['tot_capex']}-{cl}{CP['assm_capex']}",FMTD,bold=True)
+
+
+# ── Fixed Assets ───────────────────────────────────
+def build_fixed_assets(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws,46,11); frz(ws)
+    title_row(ws,"FIXED ASSET REGISTER — PP&E Roll-Forward by Asset Class","4A4A8A")
+    yr_hdr(ws, FA['yr_hdr'])
+    sec(ws,FA['asset_sec'],"Gross PP&E and Accumulated D&A by Asset Class ($M)")
+
+    CLASSES=[
+        ('lines',  "TRANSMISSION LINES",   40, 3200, 1067, 0.50),
+        ('subs',   "SUBSTATIONS",           40, 2400,  800, 0.30),
+        ('trans',  "TRANSFORMERS",          30, 1200,  480, 0.10),
+        ('scada',  "SCADA & CONTROL",       15,  600,  180, 0.07),
+        ('other',  "OTHER EQUIPMENT",       20,  400,   73, 0.03),
+    ]
+    # (cls, label, life, opening_gross, opening_accum_da, capex_alloc_pct)
+
+    for cls,label,life,og,oda,alloc in CLASSES:
+        base=_FA_BASE[cls]
+        sec_row=FA[f'{cls}_sec']
+        ws.cell(row=sec_row,column=1,value=f"{label}  (Standard Life: {life} yrs)").font=F_S
+        for c in range(1,DC+NT): ws.cell(row=sec_row,column=c).fill=C_SEC
+
+        for sub_lbl,key in [("  Opening Gross PP&E",f'{cls}_ogross'),
+            ("  + Additions (from Capex)",f'{cls}_adds'),
+            ("  − Disposals",f'{cls}_disp'),
+            ("  Closing Gross PP&E",f'{cls}_cgross'),
+            ("  Opening Accum. D&A",f'{cls}_oda'),
+            ("  D&A Charge (closing gross / life)",f'{cls}_da_chg'),
+            ("  Closing Accum. D&A",f'{cls}_cda')]:
+            lbl(ws,FA[key],sub_lbl)
+
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            pv=get_column_letter(col-1) if col>DC else None
+
+            if yr==2019:
+                fcell(ws,FA[f'{cls}_ogross'],col,og,FMTD,hist=True)
+                fcell(ws,FA[f'{cls}_oda'],   col,oda,FMTD,hist=True)
+            else:
+                fcell(ws,FA[f'{cls}_ogross'],col,f"={pv}{FA[f'{cls}_cgross']}",FMTD,hist=h)
+                fcell(ws,FA[f'{cls}_oda'],   col,f"={pv}{FA[f'{cls}_cda']}",FMTD,hist=h)
+
+            # Additions from Capex tab (alloc%)
+            capex_src=f"='Capex'!{cl}{CP['tot_capex']}*{alloc}"
+            fcell(ws,FA[f'{cls}_adds'],col,capex_src,FMTD,hist=h)
+            fcell(ws,FA[f'{cls}_disp'],col,0,FMTD,hist=h)
+            fcell(ws,FA[f'{cls}_cgross'],col,
+                f"={cl}{FA[f'{cls}_ogross']}+{cl}{FA[f'{cls}_adds']}-{cl}{FA[f'{cls}_disp']}",
+                FMTD,hist=h)
+            # D&A = closing gross / life (simplified straight-line)
+            fcell(ws,FA[f'{cls}_da_chg'],col,
+                f"={cl}{FA[f'{cls}_cgross']}/{life}",FMTD,hist=h)
+            fcell(ws,FA[f'{cls}_cda'],col,
+                f"={cl}{FA[f'{cls}_oda']}+{cl}{FA[f'{cls}_da_chg']}",FMTD,hist=h)
+
+    # Totals section
+    sec(ws,FA['tot_sec'],"CONSOLIDATED TOTALS ($M)")
+    for tot_lbl,tot_key,sub_key in [
+        ("  Total Gross PP&E",FA['tot_gross'],f'{{}}_cgross'),
+        ("  Total Accum. D&A",FA['tot_accum_da'],f'{{}}_cda'),
+        ("  Total Net PP&E",  FA['tot_net_ppe'], None),
+        ("  Total D&A Charge (feeds IS D&A)",FA['da_charge'],f'{{}}_da_chg')]:
+        lbl(ws,tot_key,tot_lbl)
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        for tot_key,sk in [(FA['tot_gross'],'_cgross'),(FA['tot_accum_da'],'_cda'),(FA['da_charge'],'_da_chg')]:
+            refs="+".join(f"{cl}{FA[f'{c}{sk}']}" for c in _FA_CLASSES)
+            fcell(ws,tot_key,col,f"={refs}",FMTD,bold=True,hist=h)
+        fcell(ws,FA['tot_net_ppe'],col,
+            f"={cl}{FA['tot_gross']}-{cl}{FA['tot_accum_da']}",FMTD,bold=True,tot=True,hist=h)
+
+
+# ── Workforce ──────────────────────────────────────
+def build_workforce(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws,46,11); frz(ws)
+    title_row(ws,"WORKFORCE — Headcount & Labour Cost Model","2E6B3E")
+    yr_hdr(ws, WF['yr_hdr'])
+    sec(ws,WF['oncost_sec'],"On-Cost Parameters")
+    lbl(ws,WF['oncost_rate'],"  On-Cost Rate (super, leave, workers comp, etc.)")
+    inp(ws,WF['oncost_rate'],DC,0.30,FMTP)
+
+    DEPTS=[
+        # (key, label, hist_fte[5], fcst_fte[10], avg_sal_base $000)
+        ('ops',  "NETWORK OPERATIONS (field technicians & operators)",
+          [248,251,254,257,260],[263,267,270,273,277,280,283,287,290,294],95),
+        ('eng',  "ENGINEERING & PLANNING (asset, protection, planning)",
+          [78,79,80,81,82],[83,84,86,87,89,90,92,93,95,97],120),
+        ('corp', "CORPORATE & SHARED SERVICES (finance, HR, legal, comms)",
+          [118,119,120,121,122],[123,124,125,126,127,128,129,130,131,132],110),
+        ('ict',  "ICT & DIGITAL (infrastructure, cybersecurity, data)",
+          [42,43,44,45,46],[48,50,52,54,55,57,58,59,60,61],115),
+        ('exec', "EXECUTIVE & MANAGEMENT (C-suite, directors, managers)",
+          [25,25,25,25,25],[25,25,25,25,25,25,25,26,26,26],250),
+    ]
+
+    sec(ws,WF['dept_sec'],"Workforce by Department")
+    for dept_key,dept_lbl,h_fte,f_fte,sal_base in DEPTS:
+        sec_row=WF[f'{dept_key}_sec']
+        ws.cell(row=sec_row,column=1,value=dept_lbl).font=F_S
+        for c in range(1,DC+NT): ws.cell(row=sec_row,column=c).fill=C_SEC
+        lbl(ws,WF[f'{dept_key}_fte'],  "  Headcount (FTE)")
+        lbl(ws,WF[f'{dept_key}_sal'],  "  Avg. Salary ($/FTE, nominal $'000)")
+        lbl(ws,WF[f'{dept_key}_cost'], "  Salary Cost ($M)")
+        lbl(ws,WF[f'{dept_key}_oncost'],"  On-Costs ($M)")
+        lbl(ws,WF[f'{dept_key}_total'],"  Total Labour Cost ($M)")
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            pv=get_column_letter(col-1) if col>DC else None
+            fte=h_fte[i] if h else f_fte[i-NH]
+            if h:
+                hcell(ws,WF[f'{dept_key}_fte'],col,fte,FMTN)
+                sal_nom=round(sal_base*(1+HV['cpi'][i])**i/1000,3)
+                hcell(ws,WF[f'{dept_key}_sal'],col,round(sal_base*(1+0.025)**i,1),"#,##0")
+            else:
+                fcell(ws,WF[f'{dept_key}_fte'],col,fte,FMTN)
+                fcell(ws,WF[f'{dept_key}_sal'],col,
+                    f"={pv}{WF[f'{dept_key}_sal']}*(1+Assumptions!{cl}{A['cpi']})" if i>NH
+                    else round(sal_base*(1+0.025)**NH,1),"#,##0",hist=False)
+            fcell(ws,WF[f'{dept_key}_cost'],col,
+                f"={cl}{WF[f'{dept_key}_fte']}*{cl}{WF[f'{dept_key}_sal']}/1000",FMTD,hist=h)
+            fcell(ws,WF[f'{dept_key}_oncost'],col,
+                f"={cl}{WF[f'{dept_key}_cost']}*$B${WF['oncost_rate']}",FMTD,hist=h)
+            fcell(ws,WF[f'{dept_key}_total'],col,
+                f"={cl}{WF[f'{dept_key}_cost']}+{cl}{WF[f'{dept_key}_oncost']}",
+                FMTD,bold=True,hist=h)
+
+    sec(ws,WF['tot_sec'],"TOTAL WORKFORCE SUMMARY")
+    lbl(ws,WF['tot_fte'],"  Total Headcount (FTE)")
+    lbl(ws,WF['tot_cost'],"  Total Labour Cost ($M)")
+    lbl(ws,WF['ops_feed'],"  → Network Ops Cost (feeds O&M line)")
+    lbl(ws,WF['supp_feed'],"  → Support Functions Cost (feeds Corporate line)")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fte_refs="+".join(f"{cl}{WF[f'{d}_fte']}" for d in _WF_DEPTS)
+        cost_refs="+".join(f"{cl}{WF[f'{d}_total']}" for d in _WF_DEPTS)
+        fcell(ws,WF['tot_fte'],col,f"={fte_refs}",FMTN,bold=True,hist=h)
+        fcell(ws,WF['tot_cost'],col,f"={cost_refs}",FMTD,bold=True,tot=True,hist=h)
+        fcell(ws,WF['ops_feed'],col,f"={cl}{WF['ops_total']}",FMTD,hist=h)
+        supp_depts = ['eng','corp','ict','exec']
+        supp_refs = '+'.join(f'{cl}{WF[d+"_total"]}' for d in supp_depts)
+        fcell(ws,WF['supp_feed'],col,f'={supp_refs}',FMTD,hist=h)
+
+
+# ── Maintenance ────────────────────────────────────
+def build_maintenance(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws,46,11); frz(ws)
+    title_row(ws,"MAINTENANCE — Asset Maintenance Cost Schedule","8B4513")
+    yr_hdr(ws, MN['yr_hdr'])
+    sec(ws,MN['plan_sec'],"PLANNED / PREVENTIVE MAINTENANCE ($M)")
+
+    # Base maintenance rates per asset class ($M/yr, escalate with CPI)
+    MAINT_BASE=[
+        (MN['lines'], "  Transmission Lines",  24.0),
+        (MN['subs'],  "  Substations",          18.0),
+        (MN['trans'], "  Transformers",          12.0),
+        (MN['scada'], "  SCADA & Control",        8.0),
+        (MN['other'], "  Other Equipment",        4.5),
+    ]
+    H_CPI_CUM=[1.0,1.017,1.035,1.065,1.128]  # cumulative CPI index for FY2019-FY2023
+    for row,lbl_t,base in MAINT_BASE:
+        lbl(ws,row,lbl_t)
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            pv=get_column_letter(col-1) if col>DC else None
+            if h:
+                hcell(ws,row,col,round(base*H_CPI_CUM[i],1),FMTD)
+            else:
+                if i==NH:
+                    prev_val=round(base*H_CPI_CUM[-1],1)
+                    fcell(ws,row,col,f"={prev_val}*(1+Assumptions!{cl}{A['cpi']})",FMTD)
+                else:
+                    fcell(ws,row,col,
+                        f"={pv}{row}*(1+Assumptions!{cl}{A['cpi']})",FMTD)
+
+    lbl(ws,MN['tot_planned'],"  Total Planned Maintenance")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,MN['tot_planned'],col,
+            f"={cl}{MN['lines']}+{cl}{MN['subs']}+{cl}{MN['trans']}+{cl}{MN['scada']}+{cl}{MN['other']}",
+            FMTD,bold=True,sub=True,hist=h)
+
+    sec(ws,MN['corr_sec'],"CORRECTIVE / EMERGENCY MAINTENANCE ($M)")
+    lbl(ws,MN['corr_rate'],"  Corrective Rate (% of planned)")
+    inp(ws,MN['corr_rate'],DC,0.15,FMTP)
+    lbl(ws,MN['tot_corr'],"  Total Corrective Maintenance")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,MN['tot_corr'],col,
+            f"={cl}{MN['tot_planned']}*$B${MN['corr_rate']}",FMTD,hist=h)
+
+    sec(ws,MN['tot_sec'],"TOTAL MAINTENANCE COST ($M) — Feeds Network O&M in IS")
+    lbl(ws,MN['tot_maint'],"  Total Maintenance (Planned + Corrective)")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,MN['tot_maint'],col,
+            f"={cl}{MN['tot_planned']}+{cl}{MN['tot_corr']}",
+            FMTD,bold=True,tot=True,hist=h)
+
+    note=ws.cell(row=MN['tot_maint']+1,column=1,
+        value="  Note: Maintenance total is a supporting schedule. "
+              "IS Network O&M is currently driven by Assumptions/REFM. "
+              "Update REFM O&M inputs to align with this schedule.")
+    note.font=mkf(italic=True,color="595959",size=9)
+
+
+# ── Initiatives ────────────────────────────────────
+def build_initiatives(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws,48,11); frz(ws)
+    title_row(ws,"STRATEGIC INITIATIVES — Revenue Growth & Cost Reduction Pipeline","B22222")
+    yr_hdr(ws, IT['yr_hdr'])
+
+    INIT_DATA={
+        # Revenue: (row_key, label, {yr: annual_benefit $M})
+        'rev':[
+            ('rev_ancillary',"  Ancillary Services & FCAS Revenue",
+              {2025:3,2026:5,2027:6,2028:7,2029:8,2030:8,2031:8,2032:9,2033:9}),
+            ('rev_conn',    "  New Connection Pipeline (beyond P004/P007)",
+              {2026:2,2027:3,2028:4,2029:4,2030:5,2031:5,2032:5,2033:6}),
+            ('rev_tariff',  "  Tariff Structure & Access Review",
+              {2027:4,2028:5,2029:5,2030:5,2031:6,2032:6,2033:6}),
+        ],
+        'opex':[
+            ('opex_procure', "  Procurement & Supply Chain Savings",
+              {2025:2,2026:3,2027:4,2028:5,2029:6,2030:6,2031:7,2032:7,2033:7}),
+            ('opex_auto',    "  Digital Automation & Predictive Maintenance",
+              {2026:1,2027:2,2028:3,2029:3,2030:4,2031:4,2032:5,2033:5}),
+            ('opex_energy',  "  Energy Efficiency & Fleet Electrification",
+              {2025:1,2026:1,2027:2,2028:2,2029:2,2030:2,2031:2,2032:2,2033:2}),
+        ],
+        'fin':[
+            ('fin_refi',  "  Debt Refinancing — Lower Benchmark Rate",
+              {2025:4,2026:5,2027:6,2028:7,2029:8,2030:8,2031:9,2032:9,2033:10}),
+            ('fin_hedge', "  Interest Rate Hedging Programme",
+              {2026:2,2027:2,2028:3,2029:3,2030:3,2031:3,2032:3,2033:3}),
+        ],
+        'dep':[
+            ('dep_life',  "  Asset Life Extension Review (regulatory approved)",
+              {2025:3,2026:4,2027:5,2028:5,2029:5,2030:5,2031:6,2032:6,2033:6}),
+            ('dep_disp',  "  Targeted Asset Disposal & Write-Off",
+              {2026:2,2027:2,2028:2,2029:2,2030:2,2031:2,2032:2,2033:2}),
+        ],
+    }
+    CAT_META=[
+        ('rev', IT['rev_sec'],  "REVENUE ENHANCEMENT ($M — annual benefit)",  IT['tot_rev'],  "C_HDR","→ Added to IS Revenue (above base MAR)"),
+        ('opex',IT['opex_sec'], "OPEX REDUCTION INITIATIVES ($M — annual saving)",IT['tot_opex'],"7030A0","→ Reduces IS Total Opex"),
+        ('fin', IT['fin_sec'],  "FINANCE COST REDUCTION ($M — annual saving)", IT['tot_fin'],  "FF6600","→ Reduces IS Interest Expense"),
+        ('dep', IT['dep_sec'],  "DEPRECIATION REDUCTION ($M — annual saving)", IT['tot_dep'],  "7B3F00","→ Reduces IS D&A Charge"),
+    ]
+
+    for cat,sec_row,sec_lbl,tot_row,col_hex,feed_note in CAT_META:
+        ws.cell(row=sec_row,column=1,value=sec_lbl).font=F_S
+        for c in range(1,DC+NT): ws.cell(row=sec_row,column=c).fill=fill("F0F0F0")
+        for init_key,init_lbl,sched in INIT_DATA[cat]:
+            row=IT[init_key]; lbl(ws,row,init_lbl)
+            for i,yr in enumerate(ALL):
+                col=DC+i; h=yr in HIST
+                val=sched.get(yr,0)
+                if h:
+                    hcell(ws,row,col,val if val else 0,FMTD)
+                else:
+                    fcell(ws,row,col,val if val else 0,FMTD)
+
+        lbl(ws,tot_row,f"  TOTAL {cat.upper()} INITIATIVES")
+        row_keys=[IT[k] for k,_,_ in INIT_DATA[cat]]
+        for i,yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            refs="+".join(f"{cl}{r}" for r in row_keys)
+            fcell(ws,tot_row,col,f"={refs}",FMTD,bold=True,tot=True,hist=h)
+        # Feed note
+        note=ws.cell(row=tot_row+1,column=1,value=f"  {feed_note}")
+        note.font=mkf(italic=True,color="595959",size=9)
+
+    # Net value section
+    sec(ws,IT['net_sec'],"NET INITIATIVE VALUE — ANNUAL IMPACT ON NET INCOME ($M)")
+    lbl(ws,IT['net_value'],"  Net Annual Value (Rev + Opex + Finance + D&A savings, pre-tax)")
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws,IT['net_value'],col,
+            f"={cl}{IT['tot_rev']}+{cl}{IT['tot_opex']}+{cl}{IT['tot_fin']}+{cl}{IT['tot_dep']}",
+            FMTD,bold=True,tot=True,hist=h)
+
+
+# ── Income Statement (updated — integrates Initiatives & Fixed Assets) ──
+def build_is(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws); frz(ws)
+    title_row(ws,"INCOME STATEMENT — Electricity Grid Transmission Utility")
+    yr_hdr(ws,IS['yr_hdr'])
+    sec(ws,IS['rev_sec'],"Revenue ($M)")
+    for lbl_t,key in [("  Transmission Revenue",IS['trans_rev']),
+        ("  Connection & Access Fees",IS['conn_rev']),("  Total Revenue",IS['tot_rev'])]:
+        lbl(ws,key,lbl_t)
+    sec(ws,IS['opex_sec'],"Operating Expenditure ($M)")
+    for lbl_t,key in [("  Network O&M",IS['om']),("  Corporate",IS['corp']),
+        ("  Insurance",IS['insur']),("  Regulatory",IS['reg']),("  Total Opex",IS['tot_opex'])]:
+        lbl(ws,key,lbl_t)
+    for lbl_t,key in [("EBITDA",IS['ebitda']),("  Depreciation & Amortisation",IS['da']),
+        ("EBIT",IS['ebit']),("  Interest Expense",IS['int_exp']),("EBT",IS['ebt']),
+        ("  Income Tax",IS['tax']),("Net Income",IS['net_inc']),
+        ("  Dividends",IS['divs']),("  Retained Earnings",IS['retd'])]:
+        lbl(ws,key,lbl_t)
+    for i,yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST; idx=yr-2019
+        pv=get_column_letter(col-1) if col>DC else None
+        if h:
+            d=HIST_DATA[idx]
+            hcell(ws,IS['trans_rev'],col,d['trans'],FMTD)
+            hcell(ws,IS['conn_rev'],col,d['conn'],FMTD)
+            hcell(ws,IS['tot_rev'],col,d['rev'],FMTD,bold=True)
+            for r_is,key in [(IS['om'],'om'),(IS['corp'],'corp'),(IS['insur'],'insur'),(IS['reg'],'reg')]:
+                hcell(ws,r_is,col,HV[key][idx],FMTD)
+            hcell(ws,IS['tot_opex'],col,d['tot_op'],FMTD,bold=True)
+            hcell(ws,IS['ebitda'],col,d['ebitda'],FMTD,bold=True)
+            hcell(ws,IS['da'],col,d['da'],FMTD)
+            hcell(ws,IS['ebit'],col,d['ebit'],FMTD,bold=True)
+            hcell(ws,IS['int_exp'],col,d['int_e'],FMTD)
+            hcell(ws,IS['ebt'],col,d['ebt'],FMTD,bold=True)
+            hcell(ws,IS['tax'],col,d['tax'],FMTD)
+            hcell(ws,IS['net_inc'],col,d['ni'],FMTD,bold=True)
+            hcell(ws,IS['divs'],col,d['divs'],FMTD)
+            hcell(ws,IS['retd'],col,d['retd'],FMTD)
+        else:
+            # Revenue: PTRM MAR + revenue initiatives
+            fcell(ws,IS['conn_rev'],col,xref("Assumptions",cl,A['conn_fees']),FMTD)
+            fcell(ws,IS['trans_rev'],col,
+                f"=PTRM!{cl}{PT['mar']}-{cl}{IS['conn_rev']}+Initiatives!{cl}{IT['tot_rev']}",FMTD)
+            fcell(ws,IS['tot_rev'],col,
+                f"=PTRM!{cl}{PT['mar']}+Initiatives!{cl}{IT['tot_rev']}",FMTD,bold=True,sub=True)
+            # Opex: REFM minus opex initiatives
+            for r_is,r_rf in [(IS['om'],RF['om']),(IS['corp'],RF['corp']),
+                (IS['insur'],RF['insur']),(IS['reg'],RF['reg'])]:
+                fcell(ws,r_is,col,xref("REFM",cl,r_rf),FMTD)
+            fcell(ws,IS['tot_opex'],col,
+                f"=SUM({cl}{IS['om']}:{cl}{IS['reg']})-Initiatives!{cl}{IT['tot_opex']}",
+                FMTD,bold=True,sub=True)
+            fcell(ws,IS['ebitda'],col,
+                f"={cl}{IS['tot_rev']}-{cl}{IS['tot_opex']}",FMTD,bold=True,tot=True)
+            # D&A from Fixed Assets tab minus depreciation reduction initiatives
+            fcell(ws,IS['da'],col,
+                f"='Fixed Assets'!{cl}{FA['da_charge']}-Initiatives!{cl}{IT['tot_dep']}",FMTD)
+            fcell(ws,IS['ebit'],col,
+                f"={cl}{IS['ebitda']}-{cl}{IS['da']}",FMTD,bold=True,tot=True)
+            # Interest: prior debt × CoD minus finance initiatives
+            fcell(ws,IS['int_exp'],col,
+                f"='Balance Sheet'!{pv}{BS['lt_debt']}*Assumptions!$B${A['cod']}"
+                f"-Initiatives!{cl}{IT['tot_fin']}",FMTD)
+            fcell(ws,IS['ebt'],col,
+                f"={cl}{IS['ebit']}-{cl}{IS['int_exp']}",FMTD,bold=True,tot=True)
+            fcell(ws,IS['tax'],col,
+                f"=MAX({cl}{IS['ebt']}*Assumptions!$B${A['tax_rate']},0)",FMTD)
+            fcell(ws,IS['net_inc'],col,
+                f"={cl}{IS['ebt']}-{cl}{IS['tax']}",FMTD,bold=True,tot=True)
+            fcell(ws,IS['divs'],col,
+                f"={cl}{IS['net_inc']}*Assumptions!$B${A['div_pay']}",FMTD)
+            fcell(ws,IS['retd'],col,
+                f"={cl}{IS['net_inc']}-{cl}{IS['divs']}",FMTD)
+
+# ── REFM (updated — references Capex tab for forecast) ──
+def build_refm(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws); frz(ws)
+    title_row(ws,"REVENUE & EXPENDITURE FORECASTING MODEL (REFM)","7030A0")
+    yr_hdr(ws,RF['yr_hdr'])
+    sec(ws,RF['opex_sec'],"Operating Expenditure ($M)")
+    for row,lbl_t,hk,fk in [(RF['om'],"  Network O&M",'h_om','om'),(RF['corp'],"  Corporate",'h_corp','corp'),
+        (RF['insur'],"  Insurance",'h_insur','insur'),(RF['reg'],"  Regulatory",'h_reg','reg')]:
+        lbl(ws,row,lbl_t)
+        for i in range(NH): fcell(ws,row,DC+i,xref("Assumptions",ylet(HIST[i]),A[hk]),FMTD,hist=True)
+        for i in range(NF): fcell(ws,row,DC+NH+i,xref("Assumptions",ylet(FCST[i]),A[fk]),FMTD)
+    lbl(ws,RF['tot_opex'],"Total Opex")
+    for i in range(NT):
+        col=DC+i; cl=get_column_letter(col); h=i<NH
+        fcell(ws,RF['tot_opex'],col,f"=SUM({cl}{RF['om']}:{cl}{RF['reg']})",FMTD,bold=True,tot=True,hist=h)
+    sec(ws,RF['capex_sec'],"Capital Expenditure ($M) — Forecast sourced from Capex tab")
+    for row,lbl_t,hk,cp_row in [
+        (RF['aug'],"  Augmentation Capex",'h_aug',CP['aug']),
+        (RF['repl'],"  Replacement / Renewal",'h_repl',CP['repl']),
+        (RF['conn'],"  Connections",'h_conn',CP['conn'])]:
+        lbl(ws,row,lbl_t)
+        for i in range(NH): fcell(ws,row,DC+i,xref("Assumptions",ylet(HIST[i]),A[hk]),FMTD,hist=True)
+        for i in range(NF): fcell(ws,row,DC+NH+i,xref("Capex",ylet(FCST[i]),cp_row),FMTD)
+    lbl(ws,RF['tot_capex'],"Total Capex")
+    for i in range(NT):
+        col=DC+i; cl=get_column_letter(col); h=i<NH
+        fcell(ws,RF['tot_capex'],col,f"=SUM({cl}{RF['aug']}:{cl}{RF['conn']})",FMTD,bold=True,tot=True,hist=h)
+    sec(ws,RF['var_sec'],"Opex Variance — Allowed vs Actual ($M)")
+    lbl(ws,RF['opex_allowed'],"  Opex Allowed (from PTRM)")
+    lbl(ws,RF['opex_actual'],"  Opex Actual (this sheet)")
+    lbl(ws,RF['opex_var'],"  Variance (Allowed − Actual)")
+    for i in range(NT):
+        col=DC+i; cl=get_column_letter(col); h=i<NH
+        fcell(ws,RF['opex_allowed'],col,xref("PTRM",cl,PT['opex_all']),FMTD,hist=h)
+        fcell(ws,RF['opex_actual'],col,f"={cl}{RF['tot_opex']}",FMTD,hist=h)
+        fcell(ws,RF['opex_var'],col,f"={cl}{RF['opex_allowed']}-{cl}{RF['opex_actual']}",FMTD,bold=True,hist=h)
+    sec(ws,RF['ecm_sec'],"Efficiency Carryover Mechanism (ECM)")
+    lbl(ws,RF['ecm_rate'],"  ECM Sharing Rate"); inp(ws,RF['ecm_rate'],DC,0.30,FMTP)
+    lbl(ws,RF['ecm_ben'],"  ECM Benefit ($M)")
+    for i in range(NT):
+        col=DC+i; cl=get_column_letter(col); h=i<NH
+        fcell(ws,RF['ecm_ben'],col,f"=MAX({cl}{RF['opex_var']},0)*$B${RF['ecm_rate']}",FMTD,hist=h)
+
+
+# ── Main build function (17 tabs) ─────────────────────
 def build():
     wb = Workbook()
-    ws_cover = wb.active; ws_cover.title="Cover"
+    ws_cover = wb.active;          ws_cover.title = "Cover"
     ws_assm  = wb.create_sheet("Assumptions")
     ws_dtm   = wb.create_sheet("DTM")
+    ws_proj  = wb.create_sheet("Projects")
+    ws_capex = wb.create_sheet("Capex")
+    ws_fa    = wb.create_sheet("Fixed Assets")
+    ws_wf    = wb.create_sheet("Workforce")
+    ws_mn    = wb.create_sheet("Maintenance")
     ws_refm  = wb.create_sheet("REFM")
     ws_front = wb.create_sheet("Frontier")
     ws_rab   = wb.create_sheet("RAB")
     ws_ptrm  = wb.create_sheet("PTRM")
+    ws_init  = wb.create_sheet("Initiatives")
     ws_is    = wb.create_sheet("Income Statement")
     ws_bs    = wb.create_sheet("Balance Sheet")
     ws_cf    = wb.create_sheet("Cash Flow")
@@ -897,31 +1499,49 @@ def build():
     build_cover(ws_cover)
     build_assumptions(ws_assm)
     build_dtm(ws_dtm)
+    build_projects(ws_proj)
+    build_capex(ws_capex)
+    build_fixed_assets(ws_fa)
+    build_workforce(ws_wf)
+    build_maintenance(ws_mn)
     build_refm(ws_refm)
     build_frontier(ws_front)
     build_rab(ws_rab)
     build_ptrm(ws_ptrm)
+    build_initiatives(ws_init)
     build_is(ws_is)
     build_bs(ws_bs)
     build_cf(ws_cf)
     build_checks(ws_chk)
 
     # Tab colours
-    ws_cover.sheet_properties.tabColor = "001F4D"
-    ws_assm.sheet_properties.tabColor  = "1B6B1B"
-    ws_dtm.sheet_properties.tabColor   = "0070C0"
-    ws_refm.sheet_properties.tabColor  = "7030A0"
-    ws_front.sheet_properties.tabColor = "FF6600"
-    ws_rab.sheet_properties.tabColor   = "7B3F00"
-    ws_ptrm.sheet_properties.tabColor  = "003366"
-    ws_is.sheet_properties.tabColor    = "002060"
-    ws_bs.sheet_properties.tabColor    = "002060"
-    ws_cf.sheet_properties.tabColor    = "002060"
-    ws_chk.sheet_properties.tabColor   = "C00000"
+    tab_colours = {
+        "Cover":            "1F4E79",
+        "Assumptions":      "375623",
+        "DTM":              "7030A0",
+        "Projects":         "BF8F00",
+        "Capex":            "BF8F00",
+        "Fixed Assets":     "BF8F00",
+        "Workforce":        "BF8F00",
+        "Maintenance":      "BF8F00",
+        "REFM":             "7030A0",
+        "Frontier":         "7030A0",
+        "RAB":              "7030A0",
+        "PTRM":             "7030A0",
+        "Initiatives":      "C00000",
+        "Income Statement": "C00000",
+        "Balance Sheet":    "C00000",
+        "Cash Flow":        "C00000",
+        "Checks":           "808080",
+    }
+    for ws in wb.worksheets:
+        colour = tab_colours.get(ws.title)
+        if colour:
+            ws.sheet_properties.tabColor = colour
 
-    wb.save("three_way_finance_model.xlsx")
-    tabs=[ws.title for ws in wb.worksheets]
-    print(f"✓  three_way_finance_model.xlsx created — {len(tabs)} tabs: {tabs}")
+    path = "three_way_finance_model.xlsx"
+    wb.save(path)
+    print(f"Saved: {path}  ({len(wb.worksheets)} sheets)")
 
 if __name__ == "__main__":
     build()
