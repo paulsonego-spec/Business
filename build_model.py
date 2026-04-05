@@ -1543,5 +1543,510 @@ def build():
     wb.save(path)
     print(f"Saved: {path}  ({len(wb.worksheets)} sheets)")
 
+
+# ════════════════════════════════════════════════════════════════
+# RAB ROLL-FORWARD (DETAILED) + AER DEPRECIATION TRACKING MODELS
+# ════════════════════════════════════════════════════════════════
+
+# ── Row maps ─────────────────────────────────────────────────────
+RM = {}   # RAB Roll-Forward (detailed)
+DK = {}   # AER Depreciation Tracking
+
+# RAB Roll-Forward: asset class data
+# (key, label, AER_std_life_yrs, opening_rab_$M, capex_alloc_pct)
+RM_CLASSES = [
+    ('lines','TRANSMISSION LINES  |  AER Standard Life: 60 years',  60, 2400, 0.50),
+    ('subs', 'SUBSTATIONS  |  AER Standard Life: 55 years',          55, 1440, 0.30),
+    ('trans','TRANSFORMERS  |  AER Standard Life: 45 years',         45,  480, 0.10),
+    ('scada','SCADA & CONTROL  |  AER Standard Life: 25 years',      25,  336, 0.07),
+    ('other','OTHER EQUIPMENT  |  AER Standard Life: 30 years',      30,  144, 0.03),
+]
+
+# AER Depreciation Tracking: class data
+# (key, AER_life, ATO_life, acc_life, opening_rab, opening_tab, alloc)
+DK_CLASSES = [
+    ('lines', 60, 40, 40, 2400, 1750, 0.50),
+    ('subs',  55, 40, 40, 1440, 1050, 0.30),
+    ('trans', 45, 30, 30,  480,  350, 0.10),
+    ('scada', 25, 20, 15,  336,  245, 0.07),
+    ('other', 30, 20, 20,  144,  105, 0.03),
+]
+BLENDED_ATO_LIFE = 37   # weighted avg: 0.5×40+0.3×40+0.1×30+0.07×20+0.03×20
+_OPEN_ACCUM_TAX_DEP = 4300  # ≈ opening gross cost (7800) − opening TAB (3500)
+_OPEN_DTL = 510             # (opening Net PPE 5200 − opening TAB 3500) × 30%
+
+# RM row map: 5 classes × 6 rows each; bases at 4,11,18,25,32
+_RM_BASES = {'lines':4,'subs':11,'trans':18,'scada':25,'other':32}
+for _c, _b in _RM_BASES.items():
+    RM[f'{_c}_sec']  = _b;   RM[f'{_c}_open'] = _b+1; RM[f'{_c}_cpi']  = _b+2
+    RM[f'{_c}_cap']  = _b+3; RM[f'{_c}_dep']  = _b+4; RM[f'{_c}_close']= _b+5
+RM.update({'title':1,'yr_hdr':2,
+    'tot_sec':39,'tot_open':40,'tot_cpi':41,'tot_cap':42,'tot_dep':43,'tot_close':44,
+    'avg_rab':46,
+    'accum_sec':48,'accum_open':49,'accum_dep':50,'accum_close':51,
+    'rcp_sec':53,'rcp1_cap':54,'rcp1_dep':55,'rcp1_avg':56,
+    'rcp2_cap':58,'rcp2_dep':59,'rcp2_avg':60})
+
+# DK row map
+DK.update({'title':1,'yr_hdr':2,
+    'reg_sec':4,
+    'reg_lines':5,'reg_subs':6,'reg_trans':7,'reg_scada':8,'reg_other':9,'reg_tot':10,
+    'acc_sec':12,
+    'acc_lines':13,'acc_subs':14,'acc_trans':15,'acc_scada':16,'acc_other':17,'acc_tot':18,
+    'delta_sec':20,'delta_reg_acc':21,'delta_reg_tax':22,
+    'tab_sec':24,'tab_open':25,'tab_cap':26,'tab_dep':27,'tab_close':28,
+    'accum_sec':30,'accum_reg':31,'accum_tax_open':32,'accum_tax_dep':33,'accum_tax_close':34,
+    'rab_tab_diff':35,
+    'dtl_sec':37,'dtl_open':38,'dtl_move':39,'dtl_close':40,
+    'recon_sec':42,'recon_taxable':43,'recon_gross':44,'recon_gamma':45,
+    'recon_net':46,'recon_check':47})
+
+# ── Historical pre-computation ────────────────────────────────────
+def _calc_rab_class_hist():
+    """Per-class RAB roll-forward for FY2019A–FY2023A."""
+    rab = {cls: op for cls,_,_,op,_ in RM_CLASSES}
+    R = {}
+    for idx, yr in enumerate(HIST):
+        d = HIST_DATA[idx]; R[yr] = {}
+        for cls, _, aer_life, _, alloc in RM_CLASSES:
+            o = rab[cls]
+            cpi_v = round(o * HV['cpi'][idx], 1)
+            cap_v = round(d['cap'] * alloc, 1)
+            dep_v = round(o / aer_life, 1)
+            cl_v  = round(o + cpi_v + cap_v - dep_v, 1)
+            R[yr][cls] = {'open':o,'cpi':cpi_v,'cap':cap_v,'dep':dep_v,'close':cl_v}
+            rab[cls] = cl_v
+    return R
+
+RAB_CLASS_HIST = _calc_rab_class_hist()
+
+def _calc_tab_class_hist():
+    """Per-class TAB (Tax Asset Base) roll-forward for FY2019A–FY2023A."""
+    tab = {cls: otab for cls,_,_,_,_,otab,_ in DK_CLASSES}
+    R = {}
+    for idx, yr in enumerate(HIST):
+        d = HIST_DATA[idx]; R[yr] = {}
+        for cls, _, ato_life, _, _, _, alloc in DK_CLASSES:
+            o = tab[cls]
+            cap_v  = round(d['cap'] * alloc, 1)
+            dep_v  = round(o / ato_life, 1)
+            cl_v   = round(o + cap_v - dep_v, 1)
+            R[yr][cls] = {'open':o,'cap':cap_v,'dep':dep_v,'close':cl_v}
+            tab[cls] = cl_v
+    return R
+
+TAB_CLASS_HIST = _calc_tab_class_hist()
+
+# Pre-compute aggregate TAB totals for historical years
+_CLS_KEYS = [c for c,_,_,_,_ in RM_CLASSES]
+TAB_TOT_HIST = {}
+_accum_tax = _OPEN_ACCUM_TAX_DEP
+for _yr in HIST:
+    _d = TAB_CLASS_HIST[_yr]
+    _open  = round(sum(_d[c]['open']  for c in _CLS_KEYS), 1)
+    _cap   = round(sum(_d[c]['cap']   for c in _CLS_KEYS), 1)
+    _dep   = round(sum(_d[c]['dep']   for c in _CLS_KEYS), 1)
+    _close = round(sum(_d[c]['close'] for c in _CLS_KEYS), 1)
+    _accum_tax_open = _accum_tax
+    _accum_tax += _dep
+    TAB_TOT_HIST[_yr] = {'open':_open,'cap':_cap,'dep':_dep,'close':_close,
+                         'accum_open':round(_accum_tax_open,1),
+                         'accum_close':round(_accum_tax,1)}
+
+# ── RAB Roll-Forward (Detailed) ────────────────────────────────────
+def build_rab_rollforward(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws, 50, 11); frz(ws)
+    title_row(ws, "RAB ROLL-FORWARD MODEL — Detailed by Asset Class (AER Standard Lives)", "4B0082")
+    yr_hdr(ws, RM['yr_hdr'])
+
+    # Per-class roll-forward
+    for cls, label, aer_life, _, alloc in RM_CLASSES:
+        sec(ws, RM[f'{cls}_sec'], label)
+        for lbl_t, key in [
+            (f"    Opening RAB ($M)", f'{cls}_open'),
+            (f"    + CPI Indexation", f'{cls}_cpi'),
+            (f"    + Capex Additions (×{int(alloc*100)}% allocation)", f'{cls}_cap'),
+            (f"    − Regulatory Depreciation  (÷ {aer_life} yr AER life)", f'{cls}_dep'),
+            (f"    = Closing RAB", f'{cls}_close'),
+        ]:
+            lbl(ws, RM[key], lbl_t)
+
+        for i, yr in enumerate(ALL):
+            col = DC+i; cl = get_column_letter(col); h = yr in HIST
+            pv  = get_column_letter(col-1) if col > DC else None
+
+            if h:
+                cd = RAB_CLASS_HIST[yr][cls]
+                hcell(ws, RM[f'{cls}_open'],  col, cd['open'])
+                hcell(ws, RM[f'{cls}_cpi'],   col, cd['cpi'])
+                hcell(ws, RM[f'{cls}_cap'],   col, cd['cap'])
+                hcell(ws, RM[f'{cls}_dep'],   col, cd['dep'])
+                hcell(ws, RM[f'{cls}_close'], col, cd['close'], bold=True)
+            else:
+                prev_yr_cl = get_column_letter(ycol(yr-1))
+                fcell(ws, RM[f'{cls}_open'],  col,
+                      f"={prev_yr_cl}{RM[f'{cls}_close']}")
+                fcell(ws, RM[f'{cls}_cpi'],   col,
+                      f"={cl}{RM[f'{cls}_open']}*Assumptions!{cl}{A['cpi']}")
+                fcell(ws, RM[f'{cls}_cap'],   col,
+                      xref("Fixed Assets", cl, FA[f'{cls}_adds']))
+                fcell(ws, RM[f'{cls}_dep'],   col,
+                      f"={cl}{RM[f'{cls}_open']}/{aer_life}")
+                fcell(ws, RM[f'{cls}_close'], col,
+                      f"={cl}{RM[f'{cls}_open']}+{cl}{RM[f'{cls}_cpi']}"
+                      f"+{cl}{RM[f'{cls}_cap']}-{cl}{RM[f'{cls}_dep']}",
+                      bold=True, tot=True)
+
+    # Total section
+    sec(ws, RM['tot_sec'], "TOTAL REGULATORY ASSET BASE ($M)")
+    sub_map = {'tot_open':'open','tot_cpi':'cpi','tot_cap':'cap',
+               'tot_dep':'dep','tot_close':'close'}
+    tot_labels = {
+        'tot_open':  "  Total Opening RAB",
+        'tot_cpi':   "  Total CPI Indexation",
+        'tot_cap':   "  Total Capex Additions",
+        'tot_dep':   "  Total Regulatory Depreciation  →  Return of RAB (PTRM)",
+        'tot_close': "  Total Closing RAB",
+    }
+    for rk, rl in tot_labels.items():
+        lbl(ws, RM[rk], rl)
+        sk = sub_map[rk]
+        is_tot = (rk == 'tot_close')
+        for i, yr in enumerate(ALL):
+            col = DC+i; cl = get_column_letter(col); h = yr in HIST
+            refs = "+".join(f"{cl}{RM[f'{c}_{sk}']}" for c in _CLS_KEYS)
+            fcell(ws, RM[rk], col, f"={refs}",
+                  bold=is_tot, tot=is_tot, hist=h)
+
+    # Average RAB
+    lbl(ws, RM['avg_rab'],
+        "  Average RAB  [(Opening + Closing) ÷ 2]  →  Return on RAB base (PTRM)")
+    for i, yr in enumerate(ALL):
+        col = DC+i; cl = get_column_letter(col); h = yr in HIST
+        fcell(ws, RM['avg_rab'], col,
+              f"=({cl}{RM['tot_open']}+{cl}{RM['tot_close']})/2", hist=h)
+
+    # Accumulated regulatory depreciation
+    sec(ws, RM['accum_sec'], "Accumulated Regulatory Depreciation ($M)")
+    lbl(ws, RM['accum_open'],  "  Opening Accumulated Reg. Dep.")
+    lbl(ws, RM['accum_dep'],   "  Current Year Reg. Dep.")
+    lbl(ws, RM['accum_close'], "  Closing Accumulated Reg. Dep.")
+    for i, yr in enumerate(ALL):
+        col = DC+i; cl = get_column_letter(col); h = yr in HIST
+        pv  = get_column_letter(col-1) if col > DC else None
+        if yr == 2019:
+            fcell(ws, RM['accum_open'],  col, f"=Assumptions!$B${A['open_reg_dep']}", hist=True)
+        else:
+            fcell(ws, RM['accum_open'],  col, f"={pv}{RM['accum_close']}", hist=h)
+        fcell(ws, RM['accum_dep'],   col, f"={cl}{RM['tot_dep']}", hist=h)
+        fcell(ws, RM['accum_close'], col,
+              f"={cl}{RM['accum_open']}+{cl}{RM['accum_dep']}",
+              bold=True, tot=True, hist=h)
+
+    # Regulatory period summaries — single merged row showing period totals
+    sec(ws, RM['rcp_sec'], "Regulatory Period Summaries")
+    rcp1_lets = [get_column_letter(ycol(yr)) for yr in range(2024,2029)]
+    rcp2_lets = [get_column_letter(ycol(yr)) for yr in range(2029,2034)]
+    summary_rows = [
+        (RM['rcp1_cap'], "  RCP1 (FY2024–28)  Total Capex ($M)",          'tot_cap',   rcp1_lets),
+        (RM['rcp1_dep'], "  RCP1 (FY2024–28)  Total Reg. Depreciation",   'tot_dep',   rcp1_lets),
+        (RM['rcp1_avg'], "  RCP1 (FY2024–28)  Average Closing RAB",       'tot_close', rcp1_lets),
+        (RM['rcp2_cap'], "  RCP2 (FY2029–33)  Total Capex ($M)",          'tot_cap',   rcp2_lets),
+        (RM['rcp2_dep'], "  RCP2 (FY2029–33)  Total Reg. Depreciation",   'tot_dep',   rcp2_lets),
+        (RM['rcp2_avg'], "  RCP2 (FY2029–33)  Average Closing RAB",       'tot_close', rcp2_lets),
+    ]
+    for row, rl, src_rk, lets in summary_rows:
+        lbl(ws, row, rl)
+        sum_expr = "+".join(f"{c}{RM[src_rk]}" for c in lets)
+        if 'avg' in rl.lower():
+            fcell(ws, row, DC, f"=({sum_expr})/{len(lets)}", sub=True)
+        else:
+            fcell(ws, row, DC, f"={sum_expr}", sub=True)
+
+# ── AER Depreciation Tracking ──────────────────────────────────────
+def build_dep_tracking(ws):
+    ws.sheet_view.showGridLines=False; col_wid(ws, 54, 11); frz(ws)
+    title_row(ws,
+        "AER DEPRECIATION TRACKING MODEL — Regulatory | Accounting | Tax (ATO)",
+        "4B0082")
+    yr_hdr(ws, DK['yr_hdr'])
+
+    # ── Section A: Regulatory Depreciation ───────────────────────────
+    sec(ws, DK['reg_sec'],
+        "SECTION A — Regulatory Depreciation (AER Standard Lives) ($M)")
+    reg_rows = [
+        (DK['reg_lines'], "  Transmission Lines  (÷60yr AER)", 'lines_dep', 60),
+        (DK['reg_subs'],  "  Substations  (÷55yr AER)",         'subs_dep',  55),
+        (DK['reg_trans'], "  Transformers  (÷45yr AER)",         'trans_dep', 45),
+        (DK['reg_scada'], "  SCADA & Control  (÷25yr AER)",      'scada_dep', 25),
+        (DK['reg_other'], "  Other Equipment  (÷30yr AER)",      'other_dep', 30),
+    ]
+    for row, rl, rm_key, _ in reg_rows:
+        lbl(ws, row, rl)
+        for i, yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            fcell(ws, row, col,
+                  xref("RAB Roll-Forward", cl, RM[rm_key]), hist=h)
+    lbl(ws, DK['reg_tot'], "  Total Regulatory Depreciation  →  Return of RAB (PTRM)")
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws, DK['reg_tot'], col,
+              f"=SUM({cl}{DK['reg_lines']}:{cl}{DK['reg_other']})",
+              bold=True, tot=True, hist=h)
+
+    # ── Section B: Accounting Depreciation ───────────────────────────
+    sec(ws, DK['acc_sec'],
+        "SECTION B — Accounting Depreciation AASB 116 (from Fixed Assets tab) ($M)")
+    acc_rows = [
+        (DK['acc_lines'], "  Transmission Lines  (÷40yr acc.)", 'lines'),
+        (DK['acc_subs'],  "  Substations  (÷40yr acc.)",         'subs'),
+        (DK['acc_trans'], "  Transformers  (÷30yr acc.)",         'trans'),
+        (DK['acc_scada'], "  SCADA & Control  (÷15yr acc.)",      'scada'),
+        (DK['acc_other'], "  Other Equipment  (÷20yr acc.)",      'other'),
+    ]
+    for row, rl, cls in acc_rows:
+        lbl(ws, row, rl)
+        for i, yr in enumerate(ALL):
+            col=DC+i; cl=get_column_letter(col); h=yr in HIST
+            fcell(ws, row, col,
+                  xref("Fixed Assets", cl, FA[f'{cls}_da_chg']), hist=h)
+    lbl(ws, DK['acc_tot'],
+        "  Total Accounting Depreciation  →  cross-check vs IS D&A charge")
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws, DK['acc_tot'], col,
+              f"=SUM({cl}{DK['acc_lines']}:{cl}{DK['acc_other']})",
+              bold=True, tot=True, hist=h)
+
+    # ── Section C: Depreciation Delta ────────────────────────────────
+    sec(ws, DK['delta_sec'],
+        "SECTION C — Depreciation Delta Analysis ($M)")
+    lbl(ws, DK['delta_reg_acc'],
+        "  Regulatory Dep − Accounting Dep  "
+        "(>0 = reg slower → regulatory asset builds)")
+    lbl(ws, DK['delta_reg_tax'],
+        "  Regulatory Dep − Tax Dep  "
+        "(>0 = reg slower than ATO → MAR includes more 'Return of RAB')")
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        fcell(ws, DK['delta_reg_acc'], col,
+              f"={cl}{DK['reg_tot']}-{cl}{DK['acc_tot']}", hist=h)
+        fcell(ws, DK['delta_reg_tax'], col,
+              f"={cl}{DK['reg_tot']}-{cl}{DK['tab_dep']}", hist=h)
+
+    # ── Section D: Tax Asset Base (TAB) Roll-Forward ──────────────────
+    sec(ws, DK['tab_sec'],
+        "SECTION D — Tax Asset Base (TAB) Roll-Forward  "
+        "[ATO Prime Cost | Blended Life: 37 years] ($M)")
+    lbl(ws, DK['tab_open'],  "  Opening TAB")
+    lbl(ws, DK['tab_cap'],   "  + Capex Additions  (ATO cost basis)")
+    lbl(ws, DK['tab_dep'],
+        f"  − Tax Depreciation  (Opening TAB ÷ {BLENDED_ATO_LIFE}yr blended ATO life)")
+    lbl(ws, DK['tab_close'], "  = Closing TAB")
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        pv = get_column_letter(col-1) if col > DC else None
+        td = TAB_TOT_HIST.get(yr)
+        if h and td:
+            hcell(ws, DK['tab_open'],  col, td['open'])
+            hcell(ws, DK['tab_cap'],   col, td['cap'])
+            hcell(ws, DK['tab_dep'],   col, td['dep'])
+            hcell(ws, DK['tab_close'], col, td['close'], bold=True)
+        else:
+            prev_yr_cl = get_column_letter(ycol(yr-1))
+            fcell(ws, DK['tab_open'],  col,
+                  f"={prev_yr_cl}{DK['tab_close']}")
+            fcell(ws, DK['tab_cap'],   col,
+                  xref("Capex", cl, CP['tot_capex']))
+            fcell(ws, DK['tab_dep'],   col,
+                  f"={cl}{DK['tab_open']}/{BLENDED_ATO_LIFE}")
+            fcell(ws, DK['tab_close'], col,
+                  f"={cl}{DK['tab_open']}+{cl}{DK['tab_cap']}-{cl}{DK['tab_dep']}",
+                  bold=True, tot=True)
+
+    # ── Section E: Accumulated Depreciation Comparison ───────────────
+    sec(ws, DK['accum_sec'],
+        "SECTION E — Accumulated Depreciation Comparison ($M)")
+    lbl(ws, DK['accum_reg'],
+        "  Accumulated Regulatory Dep. (closing)  ←  RAB Roll-Forward")
+    lbl(ws, DK['accum_tax_open'],  "  Accumulated Tax Dep. (opening)")
+    lbl(ws, DK['accum_tax_dep'],   "  + Current Year Tax Dep.")
+    lbl(ws, DK['accum_tax_close'], "  = Accumulated Tax Dep. (closing)")
+    lbl(ws, DK['rab_tab_diff'],
+        "  Total RAB − Total TAB  (AER vs ATO asset base gap)")
+
+    _accum_tax_running = _OPEN_ACCUM_TAX_DEP
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        pv = get_column_letter(col-1) if col > DC else None
+        # Accumulated reg dep from RAB Roll-Forward tab
+        fcell(ws, DK['accum_reg'], col,
+              xref("RAB Roll-Forward", cl, RM['accum_close']), hist=h)
+        td = TAB_TOT_HIST.get(yr)
+        if h and td:
+            hcell(ws, DK['accum_tax_open'],  col, td['accum_open'])
+            hcell(ws, DK['accum_tax_dep'],   col, td['dep'])
+            hcell(ws, DK['accum_tax_close'], col, td['accum_close'], bold=True)
+        else:
+            prev_yr_cl = get_column_letter(ycol(yr-1))
+            fcell(ws, DK['accum_tax_open'],  col, f"={prev_yr_cl}{DK['accum_tax_close']}")
+            fcell(ws, DK['accum_tax_dep'],   col, f"={cl}{DK['tab_dep']}")
+            fcell(ws, DK['accum_tax_close'], col,
+                  f"={cl}{DK['accum_tax_open']}+{cl}{DK['accum_tax_dep']}",
+                  bold=True, tot=True)
+        # RAB − TAB
+        fcell(ws, DK['rab_tab_diff'], col,
+              xref("RAB Roll-Forward", cl, RM['tot_close'])
+              .replace("=","=") + f"-{cl}{DK['tab_close']}",
+              sub=True, hist=h)
+
+    # ── Section F: Deferred Tax Liability (DTL) Roll-Forward ──────────
+    sec(ws, DK['dtl_sec'],
+        "SECTION F — Deferred Tax Liability (DTL) Roll-Forward ($M)  "
+        "[AASB 112 | 30% corporate rate]")
+    lbl(ws, DK['dtl_open'],  "  Opening DTL")
+    lbl(ws, DK['dtl_move'],
+        "  + Movement: (Tax Dep − Acc Dep) × 30%  "
+        "(positive = DTL grows as ATO deductions exceed accounting)")
+    lbl(ws, DK['dtl_close'], "  = Closing DTL  →  feeds Balance Sheet deferred tax")
+    _dtl_open = _OPEN_DTL
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        pv = get_column_letter(col-1) if col > DC else None
+        if yr == 2019:
+            hcell(ws, DK['dtl_open'], col, _dtl_open)
+        elif h:
+            fcell(ws, DK['dtl_open'], col, f"={pv}{DK['dtl_close']}", hist=True)
+        else:
+            fcell(ws, DK['dtl_open'], col, f"={pv}{DK['dtl_close']}")
+        td = TAB_TOT_HIST.get(yr)
+        if h and td:
+            move = round((td['dep'] - HIST_DATA[i]['da']) * 0.30, 1)
+            hcell(ws, DK['dtl_move'], col, move)
+            _dtl_cl = round(_dtl_open + move, 1)
+            hcell(ws, DK['dtl_close'], col, _dtl_cl, bold=True)
+            _dtl_open = _dtl_cl
+        else:
+            fcell(ws, DK['dtl_move'], col,
+                  f"=({cl}{DK['tab_dep']}-{cl}{DK['acc_tot']})*Assumptions!$B${A['tax_rate']}")
+            fcell(ws, DK['dtl_close'], col,
+                  f"={cl}{DK['dtl_open']}+{cl}{DK['dtl_move']}",
+                  bold=True, tot=True)
+
+    # ── Section G: PTRM Tax Allowance Reconciliation ──────────────────
+    sec(ws, DK['recon_sec'],
+        "SECTION G — PTRM Tax Allowance Reconciliation ($M)")
+    lbl(ws, DK['recon_taxable'],
+        "  Regulatory Taxable Income  (Return on RAB = Avg RAB × WACC)")
+    lbl(ws, DK['recon_gross'],   "  Gross Tax  (× 30% corporate rate)")
+    lbl(ws, DK['recon_gamma'],
+        "  Less: Gamma Benefit  (× gamma × 30%)  AER imputation credit offset")
+    lbl(ws, DK['recon_net'],     "  Net PTRM Tax Allowance  (Gross − Gamma)")
+    lbl(ws, DK['recon_check'],   "  Cross-Check vs PTRM tab  (= 0 if matched)")
+    for i, yr in enumerate(ALL):
+        col=DC+i; cl=get_column_letter(col); h=yr in HIST
+        if h:
+            d = HIST_DATA[i]
+            avg_rab  = d['avg_rab']
+            taxable  = round(avg_rab * AV['wacc'], 1)
+            gross    = round(taxable * AV['tax_rate'], 1)
+            gamma_b  = round(taxable * AV['gamma'] * AV['tax_rate'], 1)
+            net_t    = round(gross - gamma_b, 1)
+            hcell(ws, DK['recon_taxable'], col, taxable)
+            hcell(ws, DK['recon_gross'],   col, gross)
+            hcell(ws, DK['recon_gamma'],   col, gamma_b)
+            hcell(ws, DK['recon_net'],     col, net_t, bold=True)
+            hcell(ws, DK['recon_check'],   col, 0)
+        else:
+            fcell(ws, DK['recon_taxable'], col,
+                  xref("RAB Roll-Forward", cl, RM['avg_rab']))
+            fcell(ws, DK['recon_gross'], col,
+                  f"={cl}{DK['recon_taxable']}*Assumptions!$B${A['tax_rate']}")
+            fcell(ws, DK['recon_gamma'], col,
+                  f"={cl}{DK['recon_taxable']}*Assumptions!$B${A['gamma']}"
+                  f"*Assumptions!$B${A['tax_rate']}")
+            fcell(ws, DK['recon_net'], col,
+                  f"={cl}{DK['recon_gross']}-{cl}{DK['recon_gamma']}",
+                  bold=True, tot=True)
+            chk_expr = (f"={cl}{DK['recon_net']}"
+                        + xref("PTRM", cl, PT['tax_all']).replace("=", "-"))
+            fcell(ws, DK['recon_check'], col, chk_expr, sub=True)
+            # Colour check cell green/red
+            c_obj = ws.cell(row=DK['recon_check'], column=col)
+            c_obj.fill = C_OK
+
+# ── Updated build() — 19 tabs ─────────────────────────────────────
+def build():
+    wb = Workbook()
+    ws_cover  = wb.active;               ws_cover.title = "Cover"
+    ws_assm   = wb.create_sheet("Assumptions")
+    ws_dtm    = wb.create_sheet("DTM")
+    ws_proj   = wb.create_sheet("Projects")
+    ws_capex  = wb.create_sheet("Capex")
+    ws_fa     = wb.create_sheet("Fixed Assets")
+    ws_wf     = wb.create_sheet("Workforce")
+    ws_mn     = wb.create_sheet("Maintenance")
+    ws_refm   = wb.create_sheet("REFM")
+    ws_front  = wb.create_sheet("Frontier")
+    ws_rab    = wb.create_sheet("RAB")
+    ws_rabrf  = wb.create_sheet("RAB Roll-Forward")
+    ws_ptrm   = wb.create_sheet("PTRM")
+    ws_deptrk = wb.create_sheet("Dep Tracking")
+    ws_init   = wb.create_sheet("Initiatives")
+    ws_is     = wb.create_sheet("Income Statement")
+    ws_bs     = wb.create_sheet("Balance Sheet")
+    ws_cf     = wb.create_sheet("Cash Flow")
+    ws_chk    = wb.create_sheet("Checks")
+
+    build_cover(ws_cover)
+    build_assumptions(ws_assm)
+    build_dtm(ws_dtm)
+    build_projects(ws_proj)
+    build_capex(ws_capex)
+    build_fixed_assets(ws_fa)
+    build_workforce(ws_wf)
+    build_maintenance(ws_mn)
+    build_refm(ws_refm)
+    build_frontier(ws_front)
+    build_rab(ws_rab)
+    build_rab_rollforward(ws_rabrf)
+    build_ptrm(ws_ptrm)
+    build_dep_tracking(ws_deptrk)
+    build_initiatives(ws_init)
+    build_is(ws_is)
+    build_bs(ws_bs)
+    build_cf(ws_cf)
+    build_checks(ws_chk)
+
+    tab_colours = {
+        "Cover":             "1F4E79",
+        "Assumptions":       "375623",
+        "DTM":               "7030A0",
+        "Projects":          "BF8F00",
+        "Capex":             "BF8F00",
+        "Fixed Assets":      "BF8F00",
+        "Workforce":         "BF8F00",
+        "Maintenance":       "BF8F00",
+        "REFM":              "7030A0",
+        "Frontier":          "7030A0",
+        "RAB":               "7030A0",
+        "RAB Roll-Forward":  "4B0082",
+        "PTRM":              "7030A0",
+        "Dep Tracking":      "4B0082",
+        "Initiatives":       "C00000",
+        "Income Statement":  "C00000",
+        "Balance Sheet":     "C00000",
+        "Cash Flow":         "C00000",
+        "Checks":            "808080",
+    }
+    for ws in wb.worksheets:
+        colour = tab_colours.get(ws.title)
+        if colour:
+            ws.sheet_properties.tabColor = colour
+
+    path = "three_way_finance_model.xlsx"
+    wb.save(path)
+    print(f"Saved: {path}  ({len(wb.worksheets)} sheets)")
+
 if __name__ == "__main__":
     build()
