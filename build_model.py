@@ -2123,21 +2123,11 @@ for _pid, _n, _, _, _, _, _, _, _, _alloc, _ in PROJECTS_V2:
     assert abs(_s - 1.0) < 0.001, f"Project {_pid} allocation sums to {_s}, must be 1.0"
 
 # ── Row maps for new tabs ───────────────────────────────────────
-AC = {}    # Asset Classes
 PRV2 = {}  # Project Register v2
 CM = {}    # Commissioning
 RO = {}    # Reg Output - Commissioned
-RR = {}    # Reg Output - Rollup
 ND = {}    # New Assets Depn
-ED = {}    # Existing Depn
 DS = {}    # Depn Summary
-
-# AC: 22 classes in rows 5-26, plus rollup section
-AC.update({'title':1,'yr_hdr':2,'hdr':4,'rollup_sec':28,'rollup_hdr':29})
-for _i, _k in enumerate(AC_KEYS):
-    AC[_k] = 5 + _i  # rows 5-26
-for _i, _r in enumerate(LEGACY_KEYS):
-    AC[f'rollup_{_r}'] = 30 + _i  # rows 30-34
 
 # PRV2: 10 projects × 30-row blocks (sec/attrs/22acs/3split/commyr/spend)
 # Block layout: b=sec, b+1=attrs, b+2..b+23=ac1..ac22, b+24=reg, b+25=nonreg,
@@ -2172,10 +2162,6 @@ RO.update({'title':1,'yr_hdr':2,'hdr':4,'tot':28})
 for _i, _k in enumerate(AC_KEYS):
     RO[_k] = 5 + _i
 
-# RR: 5 legacy classes
-RR.update({'title':1,'yr_hdr':2,'sec':4,
-    'lines':5,'subs':6,'trans':7,'scada':8,'other':9,'tot':10})
-
 # ND: 22 ACs × 12-row blocks (sec + 10 vintage rows + subtotal)
 ND.update({'title':1,'yr_hdr':2})
 for _i, _ac in enumerate(AC_KEYS):
@@ -2186,10 +2172,6 @@ for _i, _ac in enumerate(AC_KEYS):
     ND[f'{_ac}_tot'] = _b + 11
 ND.update({'grand_sec': 268, 'grand_tot': 269})
 
-# ED: 5 legacy classes
-ED.update({'title':1,'yr_hdr':2,'sec':4,
-    'lines':5,'subs':6,'trans':7,'scada':8,'other':9,'tot':10})
-
 # DS: New + Existing → totals by 5-class
 DS.update({'title':1,'yr_hdr':2,
     'new_sec':4,'new_lines':5,'new_subs':6,'new_trans':7,'new_scada':8,'new_other':9,'new_tot':10,
@@ -2197,60 +2179,6 @@ DS.update({'title':1,'yr_hdr':2,
     'exist_other':17,'exist_tot':18,
     'tot_sec':20,'tot_lines':21,'tot_subs':22,'tot_trans':23,'tot_scada':24,
     'tot_other':25,'tot_reg_dep':26})
-
-
-# ── Asset Classes builder ──────────────────────────────────────
-def build_asset_classes(ws):
-    ws.sheet_view.showGridLines = False
-    ws.column_dimensions['A'].width = 8
-    ws.column_dimensions['B'].width = 38
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 18
-    ws.column_dimensions['E'].width = 18
-    ws.row_dimensions[1].height = 26
-    ws.merge_cells("A1:E1")
-    c = ws.cell(row=1, column=1, value="ASSET CLASS DEFINITIONS — 22 AER Standard Asset Classes")
-    c.fill = fill("BF8F00"); c.font = mkf(bold=True, color="FFFFFF", size=13); c.alignment = LA
-
-    # Header row
-    for col, h in enumerate(["AC #","Asset Class Name","Useful Life (yrs)",
-                             "Depn Rate (SL)","Legacy Rollup"], start=1):
-        cc = ws.cell(row=AC['hdr'], column=col, value=h)
-        cc.fill = C_HDR; cc.font = F_H; cc.alignment = CA
-
-    # 22 class rows
-    for ac, name, life, rollup in AC_CLASSES:
-        r = AC[ac]
-        ws.cell(row=r, column=1, value=ac.upper()).font = F_B
-        ws.cell(row=r, column=2, value=name).font = F_L
-        ws.cell(row=r, column=3, value=life).number_format = FMTN
-        ws.cell(row=r, column=3).alignment = RA
-        if life >= 100:
-            ws.cell(row=r, column=4, value=0).number_format = FMTP2
-            ws.cell(row=r, column=4).font = mkf(italic=True, color="595959")
-        else:
-            ws.cell(row=r, column=4, value=f"=1/C{r}").number_format = FMTP2
-        ws.cell(row=r, column=4).alignment = RA
-        ws.cell(row=r, column=5, value=rollup.title()).font = F_L
-
-    # Rollup section
-    ws.cell(row=AC['rollup_sec'], column=1,
-            value="LEGACY 5-CLASS ROLLUP (used by Fixed Assets / RAB Roll-Forward)").font = F_S
-    for col in range(1, 6):
-        ws.cell(row=AC['rollup_sec'], column=col).fill = C_SEC
-
-    ws.cell(row=AC['rollup_hdr'], column=1, value="Rollup Class").font = F_B
-    ws.cell(row=AC['rollup_hdr'], column=2, value="22-AC Members").font = F_B
-    for r in [AC['rollup_hdr']]:
-        for col in range(1, 6):
-            ws.cell(row=r, column=col).fill = C_HDR
-            ws.cell(row=r, column=col).font = F_H
-
-    for legacy in LEGACY_KEYS:
-        r = AC[f'rollup_{legacy}']
-        members = [a.upper() for a, _, _, rr in AC_CLASSES if rr == legacy]
-        ws.cell(row=r, column=1, value=legacy.title()).font = F_B
-        ws.cell(row=r, column=2, value=", ".join(members)).font = F_L
 
 
 # ── Project Register v2 builder ──────────────────────────────────
@@ -2468,37 +2396,6 @@ def build_reg_output_commissioned(ws):
               FMTD, bold=True, tot=True, hist=h)
 
 
-# ── Reg Output - Rollup (5 legacy classes) ──────────────────────
-def build_reg_output_rollup(ws):
-    ws.sheet_view.showGridLines = False
-    col_wid(ws, 50, 11); frz(ws)
-    title_row(ws,
-        "REG OUTPUT — CAPEX ROLLUP (22 ACs → 5 Legacy Classes)",
-        "BF8F00")
-    yr_hdr(ws, RR['yr_hdr'])
-
-    sec(ws, RR['sec'], "Commissioned Capex Rolled Up to Legacy 5-Class Taxonomy ($M)")
-
-    for legacy in LEGACY_KEYS:
-        r = RR[legacy]
-        members = [a for a, _, _, rr in AC_CLASSES if rr == legacy]
-        lbl(ws, r, f"  {legacy.title()}  ({len(members)} ACs)")
-        for i, yr in enumerate(ALL):
-            col = DC + i; cl = get_column_letter(col); h = yr in HIST
-            if h:
-                hcell(ws, r, col, 0, FMTD)
-            else:
-                refs = "+".join(f"'Reg Output - Commissioned'!{cl}{RO[a]}" for a in members)
-                fcell(ws, r, col, f"={refs}", FMTD)
-
-    lbl(ws, RR['tot'], "  TOTAL")
-    for i, yr in enumerate(ALL):
-        col = DC + i; cl = get_column_letter(col); h = yr in HIST
-        fcell(ws, RR['tot'], col,
-              f"=SUM({cl}{RR['lines']}:{cl}{RR['other']})",
-              FMTD, bold=True, tot=True, hist=h)
-
-
 # ── New Assets Depreciation (vintage matrix per AC) ─────────────
 def build_new_assets_depn(ws):
     ws.sheet_view.showGridLines = False
@@ -2559,37 +2456,6 @@ def build_new_assets_depn(ws):
               FMTD, bold=True, tot=True, hist=h)
 
 
-# ── Existing Depreciation (legacy assets) ───────────────────────
-def build_existing_depn(ws):
-    ws.sheet_view.showGridLines = False
-    col_wid(ws, 50, 11); frz(ws)
-    title_row(ws,
-        "EXISTING ASSET DEPRECIATION FORECAST — Legacy 5-Class Run-Off",
-        "4B0082")
-    yr_hdr(ws, ED['yr_hdr'])
-
-    sec(ws, ED['sec'],
-        "Pre-existing asset depreciation per legacy class (sourced from RAB Roll-Forward)")
-
-    for legacy in LEGACY_KEYS:
-        r = ED[legacy]
-        members = [a for a, _, _, rr in AC_CLASSES if rr == legacy]
-        lbl(ws, r, f"  {legacy.title()}  ({len(members)} ACs in rollup)")
-        for i, yr in enumerate(ALL):
-            col = DC + i; cl = get_column_letter(col); h = yr in HIST
-            # Reference RAB Roll-Forward per-class regulatory depreciation
-            fcell(ws, r, col,
-                  f"='RAB Roll-Forward'!{cl}{RM[f'{legacy}_dep']}",
-                  FMTD, hist=h)
-
-    lbl(ws, ED['tot'], "  Total Existing Depreciation ($M)")
-    for i, yr in enumerate(ALL):
-        col = DC + i; cl = get_column_letter(col); h = yr in HIST
-        fcell(ws, ED['tot'], col,
-              f"=SUM({cl}{ED['lines']}:{cl}{ED['other']})",
-              FMTD, bold=True, tot=True, hist=h)
-
-
 # ── Depreciation Summary ────────────────────────────────────────
 def build_depn_summary(ws):
     ws.sheet_view.showGridLines = False
@@ -2617,16 +2483,16 @@ def build_depn_summary(ws):
               f"=SUM({cl}{DS['new_lines']}:{cl}{DS['new_other']})",
               FMTD, bold=True, tot=True, hist=h)
 
-    # ── Section B: Existing depn ──
+    # ── Section B: Existing depn (per-class reg dep from RAB Roll-Forward) ──
     sec(ws, DS['exist_sec'],
-        "SECTION B — Existing Asset Depreciation (from Existing Depn tab) ($M)")
+        "SECTION B — Existing Asset Depreciation (from RAB Roll-Forward) ($M)")
     for legacy in LEGACY_KEYS:
         r = DS[f'exist_{legacy}']
         lbl(ws, r, f"  {legacy.title()}")
         for i, yr in enumerate(ALL):
             col = DC + i; cl = get_column_letter(col); h = yr in HIST
             fcell(ws, r, col,
-                  f"='Existing Depn'!{cl}{ED[legacy]}",
+                  f"='RAB Roll-Forward'!{cl}{RM[f'{legacy}_dep']}",
                   FMTD, hist=h)
     lbl(ws, DS['exist_tot'], "  Total Existing Depreciation")
     for i, yr in enumerate(ALL):
@@ -2655,7 +2521,7 @@ def build_depn_summary(ws):
               FMTD, bold=True, tot=True, hist=h)
 
 
-# ── Re-wired build_fixed_assets — additions from Reg Output - Rollup ──
+# ── Re-wired build_fixed_assets ──
 def build_fixed_assets(ws):
     ws.sheet_view.showGridLines=False; col_wid(ws,46,11); frz(ws)
     title_row(ws,"FIXED ASSET REGISTER — PP&E Roll-Forward by Asset Class","4A4A8A")
@@ -2677,7 +2543,7 @@ def build_fixed_assets(ws):
         for c in range(1,DC+NT): ws.cell(row=sec_row,column=c).fill=C_SEC
 
         for sub_lbl,key in [("  Opening Gross PP&E",f'{cls}_ogross'),
-            ("  + Additions (commissioned, from Reg Output - Rollup)",f'{cls}_adds'),
+            ("  + Additions (incurred basis × class %)",f'{cls}_adds'),
             ("  − Disposals",f'{cls}_disp'),
             ("  Closing Gross PP&E",f'{cls}_cgross'),
             ("  Opening Accum. D&A",f'{cls}_oda'),
@@ -2698,8 +2564,6 @@ def build_fixed_assets(ws):
                 fcell(ws,FA[f'{cls}_oda'],   col,
                       f"={pv}{FA[f'{cls}_cda']}",FMTD,hist=h)
 
-            # Additions: keep on incurred basis × alloc% to preserve BS balance.
-            # Reg Output - Rollup tab provides commissioned-basis parallel view.
             capex_src=f"='Capex'!{cl}{CP['tot_capex']}*{alloc}"
             fcell(ws,FA[f'{cls}_adds'],col,capex_src,FMTD,hist=h)
             fcell(ws,FA[f'{cls}_disp'],col,0,FMTD,hist=h)
@@ -2782,14 +2646,11 @@ def build():
     ws_cover  = wb.active;               ws_cover.title = "Cover"
     ws_assm   = wb.create_sheet("Assumptions")
     ws_dtm    = wb.create_sheet("DTM")
-    # Capital Planning v1.2 block (8 new tabs)
-    ws_ac     = wb.create_sheet("Asset Classes")
+    # Capital Planning v1.2 block (5 new tabs)
     ws_prv2   = wb.create_sheet("Project Register v2")
     ws_cm     = wb.create_sheet("Commissioning")
     ws_ro     = wb.create_sheet("Reg Output - Commissioned")
-    ws_rr     = wb.create_sheet("Reg Output - Rollup")
     ws_nd     = wb.create_sheet("New Assets Depn")
-    ws_ed     = wb.create_sheet("Existing Depn")
     ws_ds     = wb.create_sheet("Depn Summary")
     # Existing tabs continue
     ws_proj   = wb.create_sheet("Projects")
@@ -2814,26 +2675,23 @@ def build():
     build_assumptions(ws_assm)
     build_dtm(ws_dtm)
     # Capital Planning v1.2
-    build_asset_classes(ws_ac)
     build_project_register_v2(ws_prv2)
     build_commissioning(ws_cm)
     build_reg_output_commissioned(ws_ro)
-    build_reg_output_rollup(ws_rr)
     build_new_assets_depn(ws_nd)
     # Existing flow
     build_projects(ws_proj)
     build_capex(ws_capex)
-    build_fixed_assets(ws_fa)         # re-wired override
+    build_fixed_assets(ws_fa)
     build_workforce(ws_wf)
     build_maintenance(ws_mn)
     build_refm(ws_refm)
     build_frontier(ws_front)
-    build_rab(ws_rab)                 # re-wired override
+    build_rab(ws_rab)
     build_rab_rollforward(ws_rabrf)
     build_ptrm(ws_ptrm)
     build_dep_tracking(ws_deptrk)
-    # Depn Summary depends on RAB Roll-Forward (via Existing Depn)
-    build_existing_depn(ws_ed)
+    # Depn Summary depends on RAB Roll-Forward
     build_depn_summary(ws_ds)
     build_initiatives(ws_init)
     build_is(ws_is)
@@ -2845,13 +2703,10 @@ def build():
         "Cover":                      "1F4E79",
         "Assumptions":                "375623",
         "DTM":                        "7030A0",
-        "Asset Classes":              "BF8F00",
         "Project Register v2":        "BF8F00",
         "Commissioning":              "BF8F00",
         "Reg Output - Commissioned":  "BF8F00",
-        "Reg Output - Rollup":        "BF8F00",
         "New Assets Depn":            "4B0082",
-        "Existing Depn":              "4B0082",
         "Depn Summary":               "4B0082",
         "Projects":                   "BF8F00",
         "Capex":                      "BF8F00",
