@@ -2144,7 +2144,10 @@ for _idx, _pid in enumerate(PIDS):
     PRV2[f'{_pid}_trans']  = _b + 26
     PRV2[f'{_pid}_commyr'] = _b + 27
     PRV2[f'{_pid}_spend']  = _b + 28
-PRV2.update({'tot_sec': 305, 'tot_spend': 306, 'tot_reg': 307})
+PRV2.update({'tot_sec': 305, 'tot_spend': 306, 'tot_reg': 307,
+             'ac_ref_sec': 310, 'ac_ref_hdr': 311})
+for _i, _k in enumerate(AC_KEYS):
+    PRV2[f'ac_{_k}'] = 312 + _i   # rows 312-333
 
 # CM: 10 projects × 6 rows (sec/open/inc/comm/close/blank)
 CM.update({'title':1,'yr_hdr':2,'hdr':4})
@@ -2266,6 +2269,41 @@ def build_project_register_v2(ws):
         refs = "+".join(f"{cl}{PRV2[f'{p}_spend']}*$B${PRV2[f'{p}_reg']}" for p in PIDS)
         fcell(ws, PRV2['tot_reg'], col, f"={refs}",
               FMTD, sub=True, hist=h)
+
+    # ── Asset class reference table ──
+    r_sec = PRV2['ac_ref_sec']
+    ws.cell(row=r_sec, column=1,
+            value="ASSET CLASS REFERENCE — 22 AER Classes  |  Useful Life  |  Legacy Rollup"
+            ).font = F_S
+    for c in range(1, 6):
+        ws.cell(row=r_sec, column=c).fill = fill("4B0082")
+        ws.cell(row=r_sec, column=c).font = mkf(bold=True, color="FFFFFF")
+
+    r_hdr = PRV2['ac_ref_hdr']
+    for c, txt in enumerate(["AC #", "Asset Class Name", "Useful Life (yrs)",
+                              "Depn Rate (SL %pa)", "Legacy Rollup"], start=1):
+        cc = ws.cell(row=r_hdr, column=c, value=txt)
+        cc.fill = C_HDR; cc.font = F_H; cc.alignment = CA
+
+    for row_i, (ac, name, life, rollup) in enumerate(AC_CLASSES):
+        r = PRV2[f'ac_{ac}']
+        ws.cell(row=r, column=1, value=ac.upper()).font = F_B
+        ws.cell(row=r, column=2, value=name).font = F_L
+        ws.cell(row=r, column=3, value=life if life < 999 else "N/A").number_format = FMTN
+        ws.cell(row=r, column=3).alignment = RA
+        rate_cell = ws.cell(row=r, column=4)
+        if life >= 100:
+            rate_cell.value = "Non-dep."
+            rate_cell.font = mkf(italic=True, color="595959")
+        else:
+            rate_cell.value = f"=1/C{r}"
+            rate_cell.number_format = "0.0%"
+        rate_cell.alignment = RA
+        rollup_cell = ws.cell(row=r, column=5, value=rollup.title())
+        rollup_cell.font = F_L
+        if row_i % 2 == 0:
+            for c in range(1, 6):
+                ws.cell(row=r, column=c).fill = fill("F5F0FF")
 
 
 # ── Commissioning builder (CWIP roll-forward) ───────────────────
