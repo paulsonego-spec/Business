@@ -2772,5 +2772,263 @@ def build():
     wb.save(path)
     print(f"Saved: {path}  ({len(wb.worksheets)} sheets)")
 
+# ── Assumption data for terminal report (mirrors build_assumptions) ─────────
+_ASSM = {
+    'cpi':      {2019:0.015,2020:0.017,2021:0.018,2022:0.030,2023:0.060,
+                 2024:0.025,2025:0.025,2026:0.025,2027:0.025,2028:0.025,
+                 2029:0.025,2030:0.025,2031:0.025,2032:0.025,2033:0.025},
+    'vol':      {2019:48000,2020:49000,2021:50000,2022:51000,2023:52000,
+                 2024:52000,2025:53000,2026:54000,2027:55000,2028:56000,
+                 2029:57000,2030:58000,2031:59000,2032:60000,2033:61000},
+    'tariff':   {2019:12.0,2020:12.3,2021:12.7,2022:13.0,2023:13.2,
+                 2024:13.2,2025:13.5,2026:13.8,2027:14.1,2028:14.4,
+                 2029:14.7,2030:15.0,2031:15.3,2032:15.6,2033:15.9},
+    'conn':     {2019:6,2020:6.5,2021:7,2022:7.5,2023:8,
+                 2024:8,2025:8.2,2026:8.4,2027:8.6,2028:8.8,
+                 2029:9,2030:9.2,2031:9.4,2032:9.6,2033:9.8},
+    'om':       {2019:89,2020:92,2021:95,2022:97,2023:100,
+                 2024:100,2025:102,2026:104,2027:106,2028:108,
+                 2029:110,2030:112,2031:114,2032:116,2033:118},
+    'corp':     {2019:52,2020:53,2021:54,2022:56,2023:57,
+                 2024:58,2025:59,2026:60,2027:61,2028:62,
+                 2029:63,2030:64,2031:65,2032:66,2033:67},
+    'insur':    {2019:18,2020:18,2021:18,2022:19,2023:19,
+                 2024:20,2025:20,2026:21,2027:21,2028:22,
+                 2029:22,2030:23,2031:23,2032:24,2033:24},
+    'reg':      {2019:9,2020:9,2021:9,2022:9,2023:9,
+                 2024:10,2025:10,2026:10,2027:10,2028:10,
+                 2029:11,2030:11,2031:11,2032:11,2033:11},
+    'debt_iss': {2019:300,2020:310,2021:320,2022:340,2023:360,
+                 2024:350,2025:360,2026:370,2027:380,2028:390,
+                 2029:400,2030:410,2031:420,2032:430,2033:440},
+    'debt_rep': {2019:240,2020:245,2021:250,2022:260,2023:270,
+                 2024:280,2025:285,2026:290,2027:295,2028:300,
+                 2029:305,2030:310,2031:315,2032:320,2033:325},
+    'hist_capex': {2019:280,2020:305,2021:330,2022:355,2023:380},
+    'std_life': 40, 'cod': 0.055, 'tax': 0.30, 'div_pay': 0.70,
+    'dso': 45, 'dpo': 30, 'acc_life': 35,
+    'open_rab': 4800, 'open_ltdebt': 3500, 'open_cash': 120,
+    'open_re': 420,   'open_sc': 880,
+    # (ogross, oda, life_yrs, alloc_pct)
+    'fa': {'lines':(3200,1067,40,0.50),'subs':(2400,800,40,0.30),
+           'trans':(1200,480,30,0.10),'scada':(600,180,15,0.07),
+           'other':(400,73,20,0.03)},
+}
+_FA_KEYS = ['lines','subs','trans','scada','other']
+
+
+def _print_table(title, rows, data):
+    YRS  = ALL
+    HDRS = [f"FY{str(y)[2:]}{'A' if y in HIST else 'E'}" for y in YRS]
+    W    = 38
+    COL  = 7
+
+    bar = "─" * (W + 2 + COL * len(YRS))
+    print()
+    print("=" * (W + 2 + COL * len(YRS)))
+    print(f"  {title}  ($AUD Millions)")
+    print("=" * (W + 2 + COL * len(YRS)))
+    print(f"  {'':>{W}}  " + "".join(f"{h:>{COL}}" for h in HDRS))
+
+    def fv(v):
+        if v is None:
+            return f"{'—':>{COL}}"
+        v = round(v)
+        if v < 0:
+            return f"{'('+str(abs(v))+')':>{COL}}"
+        return f"{v:>{COL},}".replace(",", ",")
+
+    for lbl, key, opts in rows:
+        if key is None:
+            print(f"  {bar}")
+            print(f"  {lbl}")
+            print(f"  {bar}")
+            continue
+        bold   = opts.get('b', False)
+        neg    = opts.get('neg', False)
+        prefix = "  " if not bold else "  "
+        vals   = "".join(fv((-1 if neg else 1) * data[y].get(key, 0)) for y in YRS)
+        print(f"  {lbl:<{W}}  {vals}")
+
+
+def report():
+    A = _ASSM
+
+    # Capex: historical from _ASSM, forecast from PROJECTS_V2
+    capex = dict(A['hist_capex'])
+    for yr in FCST:
+        capex[yr] = sum(spend.get(yr, 0) for *_, spend in PROJECTS_V2)
+
+    IS, RAB, BS, CF = {}, {}, {}, {}
+
+    prev_rab   = A['open_rab']
+    prev_debt  = A['open_ltdebt']
+    prev_cash  = A['open_cash']
+    prev_re    = A['open_re']
+    prev_gross = {c: v[0] for c, v in A['fa'].items()}
+    prev_accum = {c: v[1] for c, v in A['fa'].items()}
+    prev_ar    = None
+
+    for yr in ALL:
+        cx = capex[yr]
+
+        # Revenue & opex
+        trans_rev = A['vol'][yr] * A['tariff'][yr] / 1000
+        tot_rev   = trans_rev + A['conn'][yr]
+        tot_opex  = A['om'][yr] + A['corp'][yr] + A['insur'][yr] + A['reg'][yr]
+        ebitda    = tot_rev - tot_opex
+
+        # Fixed assets & D&A
+        da = 0
+        cur_gross = {}; cur_accum = {}
+        for cls in _FA_KEYS:
+            og, oda, life, alloc = A['fa'][cls]
+            g  = prev_gross[cls] + cx * alloc
+            da_cls = g / life
+            cur_gross[cls] = g
+            cur_accum[cls] = prev_accum[cls] + da_cls
+            da += da_cls
+        da = round(da, 1)
+
+        ebit = round(ebitda - da, 1)
+
+        # RAB
+        cpi_idx  = round(prev_rab * A['cpi'][yr], 1)
+        reg_dep  = round(prev_rab / A['std_life'], 1)
+        close_rab = round(prev_rab + cpi_idx + cx - reg_dep, 1)
+        avg_rab   = round((prev_rab + close_rab) / 2, 1)
+
+        # Debt & interest
+        close_debt = round(prev_debt + A['debt_iss'][yr] - A['debt_rep'][yr], 1)
+        avg_debt   = round((prev_debt + close_debt) / 2, 1)
+        int_exp    = round(avg_debt * A['cod'], 1)
+
+        # Earnings
+        ebt = round(ebit - int_exp, 1)
+        tax = round(max(ebt * A['tax'], 0), 1)
+        ni  = round(ebt - tax, 1)
+        div = round(max(ni * A['div_pay'], 0), 1)
+        ret = round(ni - div, 1)
+        re  = round(prev_re + ret, 1)
+
+        # Working capital
+        ar = round(tot_rev / 365 * A['dso'], 1)
+        ap = round(tot_opex / 365 * A['dpo'], 1)
+
+        # Cash flow
+        d_ar  = round(ar - (prev_ar if prev_ar is not None else ar), 1)
+        prev_opex_ap = round(
+            (A['om'][yr-1]+A['corp'][yr-1]+A['insur'][yr-1]+A['reg'][yr-1])
+            / 365 * A['dpo'], 1) if yr > 2019 else ap
+        d_ap  = round(ap - prev_opex_ap, 1)
+        cfo   = round(ni + da - d_ar + d_ap, 1)
+        cfi   = -cx
+        div_paid = div
+        cff   = round(A['debt_iss'][yr] - A['debt_rep'][yr] - div_paid, 1)
+        d_cash = round(cfo + cfi + cff, 1)
+        close_cash = round(prev_cash + d_cash, 1)
+
+        tot_gppe = round(sum(cur_gross.values()), 1)
+        tot_acda = round(sum(cur_accum.values()), 1)
+        net_ppe  = round(tot_gppe - tot_acda, 1)
+        tot_curr = round(close_cash + ar, 1)
+        tot_assets = round(tot_curr + net_ppe, 1)
+        tot_liab = round(close_debt + ap, 1)
+        tot_eq   = round(A['open_sc'] + re, 1)
+
+        IS[yr] = dict(trans_rev=trans_rev, conn=A['conn'][yr], tot_rev=tot_rev,
+                      om=A['om'][yr], corp=A['corp'][yr], insur=A['insur'][yr],
+                      reg=A['reg'][yr], tot_opex=tot_opex, ebitda=ebitda,
+                      da=da, ebit=ebit, int_exp=int_exp, ebt=ebt,
+                      tax=tax, ni=ni, div=div, ret=ret)
+        RAB[yr] = dict(open=prev_rab, cpi=cpi_idx, capex=cx,
+                       dep=reg_dep, close=close_rab, avg=avg_rab)
+        BS[yr]  = dict(cash=close_cash, ar=ar, tot_curr=tot_curr,
+                       gppe=tot_gppe, acda=tot_acda, net_ppe=net_ppe,
+                       tot_assets=tot_assets, ap=ap, ltdebt=close_debt,
+                       tot_liab=tot_liab, sc=A['open_sc'], re=re,
+                       tot_eq=tot_eq, tot_liab_eq=round(tot_liab+tot_eq,1))
+        CF[yr]  = dict(ni=ni, da=da, d_ar=d_ar, d_ap=d_ap, cfo=cfo,
+                       cfi=cfi, cff=cff, d_cash=d_cash,
+                       open_cash=prev_cash, close_cash=close_cash)
+
+        prev_rab   = close_rab; prev_debt  = close_debt
+        prev_cash  = close_cash; prev_re   = re
+        prev_gross = cur_gross;  prev_accum = cur_accum
+        prev_ar    = ar
+
+    _print_table("INCOME STATEMENT", [
+        ("Revenue",                    None, {}),
+        ("  Transmission Revenue",     'trans_rev',  {}),
+        ("  Connection & Access Fees", 'conn',       {}),
+        ("  Total Revenue",            'tot_rev',    {'b':True}),
+        ("Operating Expenditure",      None, {}),
+        ("  Network O&M",              'om',         {'neg':True}),
+        ("  Corporate",                'corp',       {'neg':True}),
+        ("  Insurance",                'insur',      {'neg':True}),
+        ("  Regulatory",               'reg',        {'neg':True}),
+        ("  Total Opex",               'tot_opex',   {'b':True,'neg':True}),
+        ("Earnings",                   None, {}),
+        ("  EBITDA",                   'ebitda',     {'b':True}),
+        ("  Depreciation & Amortisation",'da',       {'neg':True}),
+        ("  EBIT",                     'ebit',       {'b':True}),
+        ("  Interest Expense",         'int_exp',    {'neg':True}),
+        ("  EBT",                      'ebt',        {'b':True}),
+        ("  Income Tax (30%)",         'tax',        {'neg':True}),
+        ("  Net Income",               'ni',         {'b':True}),
+        ("  Dividends Paid",           'div',        {'neg':True}),
+        ("  Retained Earnings",        'ret',        {}),
+    ], IS)
+
+    _print_table("REGULATORY ASSET BASE", [
+        ("RAB Roll-Forward",           None, {}),
+        ("  Opening RAB",              'open',  {}),
+        ("  + CPI Indexation",         'cpi',   {}),
+        ("  + Capex Additions",        'capex', {}),
+        ("  − Regulatory Depreciation",'dep',   {'neg':True}),
+        ("  Closing RAB",              'close', {'b':True}),
+        ("  Average RAB",              'avg',   {}),
+    ], RAB)
+
+    _print_table("BALANCE SHEET", [
+        ("Assets",                     None, {}),
+        ("  Cash & Equivalents",       'cash',       {}),
+        ("  Accounts Receivable",      'ar',         {}),
+        ("  Total Current Assets",     'tot_curr',   {'b':True}),
+        ("  Gross PP&E",               'gppe',       {}),
+        ("  (Less) Accum. D&A",        'acda',       {'neg':True}),
+        ("  Net PP&E",                 'net_ppe',    {'b':True}),
+        ("  Total Assets",             'tot_assets', {'b':True}),
+        ("Liabilities & Equity",       None, {}),
+        ("  Accounts Payable",         'ap',         {}),
+        ("  Long-Term Debt",           'ltdebt',     {}),
+        ("  Total Liabilities",        'tot_liab',   {'b':True}),
+        ("  Share Capital",            'sc',         {}),
+        ("  Retained Earnings",        're',         {}),
+        ("  Total Equity",             'tot_eq',     {'b':True}),
+        ("  Total Liabilities & Equity",'tot_liab_eq',{'b':True}),
+    ], BS)
+
+    _print_table("CASH FLOW STATEMENT", [
+        ("Operating Activities",       None, {}),
+        ("  Net Income",               'ni',         {}),
+        ("  + Depreciation",           'da',         {}),
+        ("  +/− Change in Receivables",'d_ar',       {'neg':True}),
+        ("  +/− Change in Payables",   'd_ap',       {}),
+        ("  Net Cash from Operations", 'cfo',        {'b':True}),
+        ("Investing Activities",       None, {}),
+        ("  Capital Expenditure",      'cfi',        {}),
+        ("Financing Activities",       None, {}),
+        ("  Net Debt Drawn",           'cff',        {}),
+        ("Cash Movement",              None, {}),
+        ("  Net Change in Cash",       'd_cash',     {}),
+        ("  Opening Cash",             'open_cash',  {}),
+        ("  Closing Cash",             'close_cash', {'b':True}),
+    ], CF)
+
+    print()
+
+
 if __name__ == "__main__":
     build()
+    report()
